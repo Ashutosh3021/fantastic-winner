@@ -1,17 +1,19 @@
 # Local stack: the CodeMentor API plus a PyroCore instance to store data in.
 #
+#   # one-time: point PYRONITES_SRC at your PyroCore checkout
+#   #   set PYRONITES_SRC=C:\Users\ashut\Downloads\Pyronites
 #   docker compose up --build
 #
 # The api service waits for pyrocore to report healthy, applies its migrations,
-# and then serves on http://127.0.0.1:8000.
+# and then serves on http://127.0.0.1:8080.
 #
-# This file is for local development. It runs PyroCore with an anonymous volume
-# so nothing here is a substitute for the deployed datastore.
+# This file is for local development only. It runs PyroCore with an anonymous
+# volume; it is not a substitute for the deployed datastore.
 
 services:
   pyrocore:
     build:
-      context: ./vendor/pyronites
+      context: ${PYRONITES_SRC:?set PYRONITES_SRC to your PyroCore checkout path}
       dockerfile: Dockerfile
     environment:
       DATABASE_PATH: /data/pyrocore.db

@@ -1,9 +1,15 @@
 # Fly.io configuration for the CodeMentor API.
 #
-#   fly launch --no-deploy      (first time, to create the app)
-#   fly secrets set PYRONITES_KEY=pyro_live_... AI_ANTHROPIC_KEY=sk-ant-...
-#   fly deploy
+# Run these from the backend/ directory, not the repository root:
 #
+#   cd backend
+#   fly launch --no-deploy
+#   fly secrets set PYRONITES_URL=... PYRONITES_PROJECT=... PYRONITES_KEY=... \
+#                  EXTENSION_RETURN_ORIGINS=... AI_ANTHROPIC_KEY=...
+#   fly deploy          # runs "python scripts/migrate.py" as the release command
+#
+# `dockerfile` below is resolved relative to the directory you run from, which is
+# why this file lives in backend/ rather than at the repository root.
 # Migrations run before the app starts serving, in its own process, so a schema
 # change is applied once rather than racing between instances.
 #

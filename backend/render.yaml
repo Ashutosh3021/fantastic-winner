@@ -16,7 +16,11 @@ services:
   - type: web
     name: codementor-api
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    # Relative to the REPOSITORY ROOT, not to this file's directory. The
+    # repository is the LG root and this service lives in backend/, so leaving
+    # this as ./Dockerfile makes Render fail with "Dockerfile not found".
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
     plan: starter
     healthCheckPath: /health
     autoDeploy: true
