@@ -1,13 +1,36 @@
 import { defineConfig } from "wxt";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
+
+/**
+ * Read `.env` ourselves rather than relying on WXT to have done it.
+ *
+ * This module is evaluated before Vite loads any `.env*` file, and
+ * `host_permissions` is baked into the manifest from a value read here — so if
+ * the variable is not in `process.env` at this point the manifest silently
+ * ships the placeholder origin and Chrome blocks every request to the real
+ * backend. Reading it directly removes that dependency.
+ */
+function envFromFile(path: string, variable: string, fallback: string): string {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const match = raw.match(new RegExp(`^${variable}=(.*)$`, "m"));
+    const value = match?.[1]?.trim().replace(/\/+$/, "");
+    return value && value.length > 0 ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 /**
  * The backend origin. It has to be known before any code runs because it
- * appears in `host_permissions`. WXT loads `.env` files into `process.env`
- * before this module evaluates.
+ * appears in `host_permissions`.
  */
-const API_BASE_URL =
-  process.env.VITE_API_BASE_URL?.replace(/\/+$/, "") ?? "https://api.codementor.example";
+const API_BASE_URL = envFromFile(
+  ".env",
+  "VITE_API_BASE_URL",
+  "https://api.codementor.example",
+);
 
 /**
  * Login flow for the Pyronites account system.
