@@ -251,18 +251,19 @@ export function Overlay() {
 
                   {store.stage === "manual" && <ManualPaste language={language} />}
 
-                  {store.problem && store.stage === "idle" && (
-                    <ApproachListCard
-                      title={store.problem.title}
-                      approaches={store.approaches}
-                      recommendedFirst={store.recommendedFirst}
-                      language={language}
-                      costPerQuestion={MIN_PLAN_CREDITS}
-                      creditsLeft={creditsLeft}
-                      busy={busy}
-                      onChoose={(id) => void run(() => store.chooseApproach(id))}
-                    />
-                  )}
+                  {(store.stage === "idle" || store.stage === "approaches") &&
+                    store.problem && (
+                      <ApproachListCard
+                        title={store.problem.title}
+                        approaches={store.approaches}
+                        recommendedFirst={store.recommendedFirst}
+                        language={language}
+                        costPerQuestion={MIN_PLAN_CREDITS}
+                        creditsLeft={creditsLeft}
+                        busy={busy}
+                        onChoose={(id) => void run(() => store.chooseApproach(id))}
+                      />
+                    )}
 
                   {store.stage === "concept" && store.concept && (
                     <>

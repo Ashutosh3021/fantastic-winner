@@ -367,6 +367,11 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
         stage: body.all_passed ? "solution" : get().stage,
         draft: EMPTY_DRAFT,
       });
+      if (body.all_passed) {
+        // The learner has earned the plan; fetch it now. Leaving this to a
+        // button that no longer renders meant "Reveal the plan" never appeared.
+        await get().loadChecklist();
+      }
       track("mq_answered", {
         session_id: session.id,
         index: question.index,
@@ -431,6 +436,9 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
         stage: body.all_passed ? "solution" : get().stage,
         draft: EMPTY_DRAFT,
       });
+      if (body.all_passed) {
+        await get().loadChecklist();
+      }
       track("question_revealed", { session_id: session.id, index: question.index });
     } catch (cause) {
       set({ error: toApiError(cause) });
