@@ -172,6 +172,19 @@ class PyronitesGateway:
                         "The datastore is busy. Try again shortly.",
                         retry_after_sec=int(_retry_after(response, attempt)),
                     )
+                if response.status_code in (401, 403):
+                    # Naming the two variables that cause this saves an operator
+                    # from reading a bare "401" and guessing. It is nearly always
+                    # a key minted against a different project: /auth/me reports
+                    # whichever project was touched last, which is not
+                    # necessarily the one the app is configured to use.
+                    raise UpstreamError(
+                        "Datastore rejected the credentials "
+                        f"(HTTP {response.status_code}). Check that PYRONITES_KEY is a "
+                        f"read/write key minted for project "
+                        f"{self._settings.pyronites.project_slug!r}, and that "
+                        f"PYRONITES_PROJECT names that same project."
+                    )
                 raise UpstreamError(f"Datastore returned {response.status_code}")
 
             if response.status_code == 429:

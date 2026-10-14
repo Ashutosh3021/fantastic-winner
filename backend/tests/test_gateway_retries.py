@@ -97,9 +97,23 @@ class TestRetryPolicy:
             return httpx.Response(401)
 
         gw = PyronitesGateway(_settings(), client=_client(handler))
-        with pytest.raises(UpstreamError):
+        with pytest.raises(UpstreamError) as exc:
             await gw._request("GET", "http://pyronites.invalid/x")
         assert len(calls) == 1, "a bad key will never start working on retry"
+        # The message must name the variables an operator has to change. A bare
+        # "401" is what made this cost three deploys to diagnose.
+        assert "PYRONITES_KEY" in exc.value.message
+        assert "PYRONITES_PROJECT" in exc.value.message
+        await gw.aclose()
+
+    async def test_forbidden_also_names_the_variables(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403)
+
+        gw = PyronitesGateway(_settings(), client=_client(handler))
+        with pytest.raises(UpstreamError) as exc:
+            await gw._request("GET", "http://pyronites.invalid/x")
+        assert "PYRONITES_PROJECT" in exc.value.message
         await gw.aclose()
 
     async def test_transport_error_is_retried(self) -> None:
