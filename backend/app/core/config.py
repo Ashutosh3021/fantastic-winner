@@ -283,6 +283,13 @@ class Settings:
     def client_version_header(self) -> str:
         return "X-Client-Version"
 
+# : The shipped extension's ID. Public, not a secret: Chrome derives it from the
+# : signing key and anyone can read it off the installed extension. It is the
+# : one value that must appear in both CORS and the sign-in return allowlist, so
+# : it is defined once here rather than copy-pasted into four config files.
+EXTENSION_ORIGIN = "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Read the environment once per process.
@@ -293,7 +300,7 @@ def get_settings() -> Settings:
         environment=_env("ENVIRONMENT", "development"),
         allowed_origins=_env_list(
             "ALLOWED_ORIGINS",
-            ("http://localhost:3000", "chrome-extension://invalid"),
+            ("http://localhost:3000", EXTENSION_ORIGIN),
         ),
         log_level=_env("LOG_LEVEL", "INFO"),
         client_version=_env("CLIENT_VERSION", "0.1.0"),
@@ -311,7 +318,13 @@ def get_settings() -> Settings:
             login_code_ttl_s=_env_int("AUTH_LOGIN_CODE_TTL_S", 120),
             require_verified_email=_env_bool("REQUIRE_VERIFIED_EMAIL_FOR_AI", True),
             auto_verify_dev=_env_bool("AUTH_AUTO_VERIFY_DEV", False),
-            allowed_return_origins=_env_list("EXTENSION_RETURN_ORIGINS", ()),
+            # Default to the shipped extension rather than an empty tuple. An
+            # empty allowlist does not fail loudly: it rejects every sign-in
+            # with a generic "That sign-in link is not valid", which reads like
+            # a broken flow rather than missing configuration.
+            allowed_return_origins=_env_list(
+                "EXTENSION_RETURN_ORIGINS", (EXTENSION_ORIGIN,)
+            ),
         ),
         credits=CreditConfig(
             credits_per_window=_env_int("CREDITS_PER_WINDOW", 12),

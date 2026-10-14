@@ -47,6 +47,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "PYRONITES_URL and PYRONITES_KEY must be set before the API can start"
         )
 
+    if not settings.auth.allowed_return_origins:
+        # Same reasoning as the datastore check above. Without this the API
+        # starts, /health is green, and only a real sign-in attempt reveals
+        # that every return origin was rejected.
+        raise RuntimeError(
+            "EXTENSION_RETURN_ORIGINS must list at least one origin "
+            "(for example chrome-extension://<extension id>), otherwise the "
+            "extension cannot complete sign-in"
+        )
+
+    if settings.environment == "production" and not any(
+        origin.startswith("chrome-extension://") for origin in settings.auth.allowed_return_origins
+    ):
+        logger.warning(
+            "EXTENSION_RETURN_ORIGINS contains no chrome-extension:// origin; "
+            "no browser extension will be able to finish signing in"
+        )
+
     container = build_container(settings)
     app.state.container = container
     set_container(container)

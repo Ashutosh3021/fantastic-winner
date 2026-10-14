@@ -52,7 +52,7 @@ services:
       PYRONITES_KEY: ${PYRONITES_KEY:?set PYRONITES_KEY in .env - see scripts/README-key-setup.md}
       AI_ANTHROPIC_KEY: ${AI_ANTHROPIC_KEY:-}
       AI_OPENAI_KEY: ${AI_OPENAI_KEY:-}
-      EXTENSION_RETURN_ORIGINS: chrome-extension://invalid
+      EXTENSION_RETURN_ORIGINS: chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal
     ports:
       - "8080:8000"
 

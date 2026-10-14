@@ -99,3 +99,96 @@ class TestRejectedRedirects:
         with pytest.raises(BadRequest) as exc:
             _safe_return_to("https://evil.example/", ALLOWED)
         assert "evil.example" not in exc.value.message
+
+
+class TestReturnOriginAllowlistIsNeverEmpty:
+    """Regression: a shipped allowlist that is empty breaks every sign-in.
+
+    The deployed service accepted signups and reported a green ``/health``
+    while rejecting every ``return_to`` with "That sign-in link is not valid.",
+    because ``EXTENSION_RETURN_ORIGINS`` defaulted to ``()``. Nothing about that
+    failure points at configuration, so it is pinned here from both sides: the
+    default must be usable, and an explicitly empty value must fail at boot.
+    """
+
+    def test_default_allowlist_contains_the_shipped_extension(self) -> None:
+        from app.core.config import EXTENSION_ORIGIN
+
+        assert EXTENSION_ORIGIN == "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
+
+    def test_shipped_origin_actually_passes_the_guard(self) -> None:
+        # Ties the config default to the validator, so a typo in the constant
+        # cannot pass while still being unmatchable in a real flow.
+        from app.core.config import EXTENSION_ORIGIN
+
+        assert _safe_return_to(EXTENSION_ORIGIN, (EXTENSION_ORIGIN,)) == EXTENSION_ORIGIN
+
+    def test_env_var_can_still_override_the_default(self, monkeypatch) -> None:
+        monkeypatch.setenv(
+            "EXTENSION_RETURN_ORIGINS",
+            "chrome-extension://aaaaaaaaaa, https://app.example",
+        )
+        from app.core.config import get_settings
+
+        get_settings.cache_clear()
+        try:
+            settings = get_settings()
+            assert settings.auth.allowed_return_origins == (
+                "chrome-extension://aaaaaaaaaa",
+                "https://app.example",
+            )
+        finally:
+            get_settings.cache_clear()
+
+    def test_blank_allowlist_var_falls_back_to_the_shipped_default(
+        self, monkeypatch
+    ) -> None:
+        # An operator who empties the variable does not break sign-in: the
+        # shipped extension still works, because the default is now usable.
+        monkeypatch.setenv("EXTENSION_RETURN_ORIGINS", "   ")
+        from app.core.config import get_settings
+
+        get_settings.cache_clear()
+        try:
+            assert get_settings().auth.allowed_return_origins == (
+                "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal",
+            )
+        finally:
+            get_settings.cache_clear()
+
+    def test_lifespan_refuses_to_serve_an_empty_allowlist(
+        self, monkeypatch
+    ) -> None:
+        # Defence for a Settings built directly rather than from the
+        # environment: the process must stop at boot, not serve an API where
+        # no sign-in can ever finish.
+        import asyncio
+        import dataclasses
+
+        import app.main as main_module
+        from app.main import app, lifespan
+
+        real = main_module.get_settings()
+        broken = dataclasses.replace(
+            real,
+            auth=dataclasses.replace(real.auth, allowed_return_origins=()),
+        )
+        monkeypatch.setattr(main_module, "get_settings", lambda: broken)
+
+        async def _enter() -> None:
+            async with lifespan(app):
+                pass
+
+        with pytest.raises(RuntimeError, match="EXTENSION_RETURN_ORIGINS"):
+            asyncio.run(_enter())
+
+    def test_no_config_file_still_leaves_the_placeholder_out(self) -> None:
+        # Guards against "chrome-extension://invalid" creeping back into a
+        # template: it is a syntactically valid origin, so nothing rejects it,
+        # and it silently matches no real extension.
+        from pathlib import Path
+
+        backend_root = Path(__file__).resolve().parents[1]
+        for name in (".env.example", "docker-compose.yml", "render.yaml"):
+            text = (backend_root / name).read_text(encoding="utf-8")
+            assert "chrome-extension://invalid" not in text, name

@@ -48,10 +48,13 @@ services:
       - key: REQUIRE_VERIFIED_EMAIL_FOR_AI
         value: "true"
       # Comma separated. The extension origin is chrome-extension://<id>.
+      # Baked in rather than left as a manual value: it is public (Chrome derives
+      # it from the signing key) and an unset value silently rejects every
+      # sign-in instead of failing loudly.
       - key: EXTENSION_RETURN_ORIGINS
-        sync: false
+        value: "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
       - key: ALLOWED_ORIGINS
-        sync: false
+        value: "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
       - key: AI_ANTHROPIC_KEY
         sync: false
       - key: AI_OPENAI_KEY
