@@ -137,17 +137,22 @@ CREATE TABLE IF NOT EXISTS usage_limits (
   created_at TEXT NOT NULL
 );
 
--- The partial unique index is the fix for a defect the design otherwise had:
--- without it, two concurrent first-spends both see "no active window", both
--- insert, and one row becomes a shadow that is never read again — the learner
--- is charged and shown 12/12. Here the second insert fails loudly (§17.3).
+-- One row per (user, window) makes the upsert that reserves credits valid, and
+-- makes a retried request idempotent instead of creating a shadow window.
 --
--- The predicate uses SQLite's `strftime` because a partial index predicate
--- cannot reference a bind parameter; the expression is constant-folded by
--- SQLite and evaluated per row.
-CREATE UNIQUE INDEX IF NOT EXISTS usage_limits_one_active_window
-  ON usage_limits(user_id)
-  WHERE window_end > strftime('%Y-%m-%dT%H:%M:%fZ', 'now');
+-- An earlier version used a time-dependent partial index:
+--
+--   CREATE UNIQUE INDEX ... ON usage_limits(user_id)
+--     WHERE window_end > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+--
+-- It looked like it enforced "one active window per user". It does not: SQLite
+-- refuses non-deterministic functions in an index predicate, so the statement
+-- was rejected and *every insert into this table failed* with
+-- "non-deterministic use of strftime() in an index". The "one active window"
+-- rule is enforced in CreditService.ensure_window, which checks for an unexpired
+-- row and retries the read after a conflicting insert.
+CREATE UNIQUE INDEX IF NOT EXISTS usage_limits_user_window_start
+  ON usage_limits(user_id, window_start);
 
 CREATE INDEX IF NOT EXISTS usage_limits_user_window ON usage_limits(user_id, window_end);
 
