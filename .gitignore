@@ -1,0 +1,16 @@
+﻿# secrets
+.env
+*.local
+
+# build output
+node_modules/
+dist/
+.output/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

@@ -1,0 +1,370 @@
+@import "tailwindcss";
+
+/* Dark mode is driven by a class on our own host element inside the shadow
+   root, so the standard `is(.dark *)` variant works unchanged. */
+@custom-variant dark (&:is(.dark *));
+
+/* =============================================================================
+   Design tokens
+
+   One scale drives both surfaces (the in-page overlay inside a shadow root and
+   the popup document). Nothing below is allowed to hardcode a colour: a token
+   that is not here does not get added, it gets added as a token first.
+
+   Radii are deliberately restrained — 2/4/6/8px. Pills survive only where a
+   pill is the honest shape: status dots, tags, and the credit chip.
+   ========================================================================== */
+
+:root {
+  /* 8px family. sm 2px · md 4px · lg 6px · xl 8px · 2xl 12px (shell only) */
+  --radius: 0.5rem;
+
+  --background: hsl(40 26% 98%);
+  --foreground: hsl(222 24% 12%);
+
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(222 24% 12%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(222 24% 12%);
+
+  --primary: hsl(231 64% 52%);
+  --primary-foreground: hsl(0 0% 100%);
+  --primary-subtle: hsl(231 70% 96%);
+  --primary-subtle-foreground: hsl(231 58% 42%);
+
+  --secondary: hsl(220 18% 95%);
+  --secondary-foreground: hsl(222 22% 22%);
+
+  --muted: hsl(220 18% 96%);
+  --muted-foreground: hsl(220 9% 42%);
+
+  --accent: hsl(220 20% 93%);
+  --accent-foreground: hsl(222 24% 18%);
+
+  --destructive: hsl(0 70% 46%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --destructive-subtle: hsl(0 70% 97%);
+  --destructive-subtle-foreground: hsl(0 62% 38%);
+
+  --success: hsl(158 60% 30%);
+  --success-subtle: hsl(158 50% 95%);
+  --success-subtle-foreground: hsl(158 58% 26%);
+
+  --warning: hsl(32 88% 38%);
+  --warning-subtle: hsl(40 90% 95%);
+  --warning-subtle-foreground: hsl(30 78% 30%);
+
+  --border: hsl(220 14% 89%);
+  --border-strong: hsl(220 13% 80%);
+  --input: hsl(220 14% 86%);
+  --ring: hsl(231 64% 52%);
+
+  /* Elevation. Light mode carries separation on borders first, shadow second. */
+  --shadow-color: 220 30% 20%;
+  --shadow-sm: 0 1px 2px -1px hsl(var(--shadow-color) / 0.1);
+  --shadow-md: 0 2px 6px -2px hsl(var(--shadow-color) / 0.12);
+  --shadow-lg: 0 12px 28px -12px hsl(var(--shadow-color) / 0.22);
+
+  /* Motion. 120 / 180 / 240ms. Anything decorative is expected to opt out via
+     prefers-reduced-motion rather than relying on a duration override. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-micro: 120ms;
+  --duration-ui: 180ms;
+  --duration-panel: 240ms;
+
+  /* Diagram roles (§12.4). Layouts only ever emit these names. */
+  --cm-surface: hsl(0 0% 100%);
+  --cm-cell: hsl(220 22% 97%);
+  --cm-cell-active: hsl(168 58% 90%);
+  --cm-cell-conflict: hsl(4 82% 92%);
+  --cm-cell-muted: hsl(220 14% 90%);
+  --cm-cell-result: hsl(231 70% 93%);
+  --cm-window-band: hsl(231 70% 95%);
+  --cm-invalid-band: hsl(4 82% 95%);
+  --cm-brand: hsl(231 64% 52%);
+  --cm-line: hsl(220 14% 86%);
+  --cm-line-strong: hsl(220 13% 76%);
+  --cm-text: hsl(222 24% 18%);
+  --cm-text-muted: hsl(220 9% 42%);
+  --cm-text-inverse: hsl(0 0% 100%);
+}
+
+.dark {
+  /* Four distinguishable surfaces. Dark mode is designed, not inverted. */
+  --background: hsl(222 26% 9%);
+  --foreground: hsl(220 18% 94%);
+
+  --card: hsl(222 22% 12%);
+  --card-foreground: hsl(220 18% 94%);
+  --popover: hsl(222 22% 13%);
+  --popover-foreground: hsl(220 18% 94%);
+
+  --primary: hsl(231 82% 70%);
+  --primary-foreground: hsl(222 34% 10%);
+  --primary-subtle: hsl(231 38% 18%);
+  --primary-subtle-foreground: hsl(231 82% 82%);
+
+  --secondary: hsl(222 17% 17%);
+  --secondary-foreground: hsl(220 18% 92%);
+
+  --muted: hsl(222 17% 16%);
+  --muted-foreground: hsl(220 12% 66%);
+
+  --accent: hsl(222 17% 20%);
+  --accent-foreground: hsl(220 18% 96%);
+
+  --destructive: hsl(0 70% 64%);
+  --destructive-foreground: hsl(222 34% 10%);
+  --destructive-subtle: hsl(0 30% 17%);
+  --destructive-subtle-foreground: hsl(0 76% 80%);
+
+  --success: hsl(158 56% 54%);
+  --success-subtle: hsl(158 28% 16%);
+  --success-subtle-foreground: hsl(158 62% 76%);
+
+  --warning: hsl(40 92% 62%);
+  --warning-subtle: hsl(38 34% 16%);
+  --warning-subtle-foreground: hsl(40 92% 76%);
+
+  /* Borders carry more weight in dark mode: a 22% line reads as a surface
+     step where 26% reads as a hard edge. */
+  --border: hsl(222 16% 22%);
+  --border-strong: hsl(222 14% 32%);
+  --input: hsl(222 16% 26%);
+  --ring: hsl(231 82% 70%);
+
+  --shadow-color: 222 50% 2%;
+  --shadow-sm: 0 1px 2px -1px hsl(var(--shadow-color) / 0.5);
+  --shadow-md: 0 2px 8px -2px hsl(var(--shadow-color) / 0.55);
+  --shadow-lg: 0 16px 36px -16px hsl(var(--shadow-color) / 0.7);
+
+  --cm-surface: hsl(222 22% 13%);
+  --cm-cell: hsl(222 18% 18%);
+  --cm-cell-active: hsl(168 38% 19%);
+  --cm-cell-conflict: hsl(4 42% 20%);
+  --cm-cell-muted: hsl(222 14% 24%);
+  --cm-cell-result: hsl(231 38% 22%);
+  --cm-window-band: hsl(231 38% 20%);
+  --cm-invalid-band: hsl(4 38% 20%);
+  --cm-brand: hsl(231 82% 70%);
+  --cm-line: hsl(222 14% 28%);
+  --cm-line-strong: hsl(222 12% 42%);
+  --cm-text: hsl(220 18% 92%);
+  --cm-text-muted: hsl(220 12% 66%);
+  --cm-text-inverse: hsl(222 34% 10%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-primary-subtle-foreground: var(--primary-subtle-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-subtle: var(--destructive-subtle);
+  --color-destructive-subtle-foreground: var(--destructive-subtle-foreground);
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-success-subtle-foreground: var(--success-subtle-foreground);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-subtle-foreground: var(--warning-subtle-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --shadow-e1: var(--shadow-sm);
+  --shadow-e2: var(--shadow-md);
+  --shadow-e3: var(--shadow-lg);
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: var(--radius);
+  --radius-2xl: 12px;
+
+  /* Geist carries Latin; Noto covers Devanagari and Oriya. Geist Mono owns
+     code, hashes, and anything that benefits from a tabular figure. */
+  --font-sans: "Geist", "Noto Sans Devanagari", "Noto Sans Oriya", ui-sans-serif,
+    system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", "SF Mono", Menlo,
+    Consolas, monospace;
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
+
+  /* The overlay lives in a shadow root (`:host`); the popup is a document
+     (`:root`). One rule set covers both. */
+  :host,
+  :root {
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  /* Numerals that sit in columns — credit counts, streak days, percentages —
+     must not reflow their neighbours when the value changes. */
+  code,
+  kbd,
+  samp,
+  pre,
+  .tabular-nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* One focus treatment for the whole product. Radix components that draw their
+     own ring are opted out per-component, never globally. */
+  :host :focus-visible,
+  :root :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::after,
+    ::before {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Diagram scene roles are CSS variables so a diagram re-themes for free. */
+  .cm-scene text {
+    font-family: var(--font-sans);
+  }
+
+  .cm-ascii {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  /* The one entrance animation in the product. It runs once, for 240ms, on the
+     panel itself, and prefers-reduced-motion neutralises it via the base rule
+     above rather than needing its own query. */
+  .cm-rise {
+    animation: cm-rise var(--duration-panel) var(--ease-out) both;
+  }
+}
+
+@keyframes cm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes cm-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes cm-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Menus and dialogs. A 2px lift plus opacity — no scale bounce, no spring. */
+@keyframes cm-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes cm-unpop {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes cm-collapse {
+  from {
+    height: var(--radix-collapsible-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
+@keyframes cm-expand {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+  }
+}
+
+/* Indeterminate work indicator. Transform-only, and it disappears entirely
+   under reduced motion rather than just slowing down. */
+@keyframes cm-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cm-busy-bar {
+    animation: none !important;
+    transform: translateX(0) scale-x-1 !important;
+  }
+}

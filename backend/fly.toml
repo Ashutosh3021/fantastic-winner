@@ -1,0 +1,58 @@
+# Fly.io configuration for the CodeMentor API.
+#
+#   fly launch --no-deploy      (first time, to create the app)
+#   fly secrets set PYRONITES_KEY=pyro_live_... AI_ANTHROPIC_KEY=sk-ant-...
+#   fly deploy
+#
+# Migrations run before the app starts serving, in its own process, so a schema
+# change is applied once rather than racing between instances.
+#
+# NOTE: one worker only. The projector polls projection_queue in-process, so a
+# second worker would be a second poller on the same queue. Scale vertically, or
+# claim rows with a conditional UPDATE before raising machine_count.
+
+app = "codementor-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ENVIRONMENT = "production"
+  PYRONITES_AUTO_MIGRATE = "false"
+  PYRONITES_TIMEOUT_S = "30"
+  TRUSTED_PROXY_COUNT = "1"
+  LOG_LEVEL = "INFO"
+  ALLOW_OFFLINE_PROVIDER = "false"
+  AUTH_AUTO_VERIFY_DEV = "false"
+  REQUIRE_VERIFIED_EMAIL_FOR_AI = "true"
+
+# Set with: fly secrets set PYRONITES_URL=... PYRONITES_PROJECT=...
+#           PYRONITES_KEY=... EXTENSION_RETURN_ORIGINS=... AI_ANTHROPIC_KEY=...
+
+[deploy]
+  release_command = "python scripts/migrate.py"
+  strategy = "rolling"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 20
+    hard_limit = 25
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

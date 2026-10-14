@@ -1,0 +1,27 @@
+# Keep the build context small and never ship secrets into an image layer.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+htmlcov
+.coverage
+*.log
+server.log
+server.out
+data
+backups
+*.db
+*.sqlite3
+.vscode
+.idea

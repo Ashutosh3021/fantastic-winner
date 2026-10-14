@@ -1,0 +1,41 @@
+id: sliding_window
+name: Sliding Window
+signals:
+  - contiguous subarray or substring
+  - "longest", "shortest", "at most k"
+  - running window of valid state
+not_when:
+  - non-contiguous selection
+  - need all pairs
+core_idea: >
+  Maintain a window [left, right] that is kept valid. Expand right one step at
+  a time. When the window stops being valid, move left until it is valid again.
+  Track the best window seen so far.
+typical_micro_steps:
+  - decide what the window represents
+  - decide when to expand the right edge
+  - decide when to shrink the left edge
+  - decide what state proves the window is valid
+  - decide what value to record while moving
+common_beginner_mistakes:
+  - resetting the whole window instead of shrinking it
+  - shrinking too little, leaving a duplicate inside
+  - shrinking too much, discarding valid positions
+  - an off-by-one when computing the window size
+typical_complexity:
+  time: O(n)
+  space: O(k)
+analogy_seeds:
+  - a camera frame panning along a street
+  - a train window moving past stations
+  - a queue at a door: you let people in, and move the line forward when it gets full
+fallback_nudges:
+  - What must be true about the pieces inside the window at every moment?
+  - Which structure lets you answer "have I seen this before?" in one step?
+  - When the window stops being valid, do you restart it, or adjust one edge?
+  - Where do you keep the answer you will return at the end?
+fallback_step_notes:
+  - Name the window by what it holds, not by where its edges are.
+  - Growing right adds one item; shrinking left removes exactly one.
+  - Validity is a property of the whole window, so the check happens after each change.
+  - The best answer is recorded as you go, not computed at the end.

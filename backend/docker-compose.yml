@@ -1,0 +1,58 @@
+# Local stack: the CodeMentor API plus a PyroCore instance to store data in.
+#
+#   docker compose up --build
+#
+# The api service waits for pyrocore to report healthy, applies its migrations,
+# and then serves on http://127.0.0.1:8000.
+#
+# This file is for local development. It runs PyroCore with an anonymous volume
+# so nothing here is a substitute for the deployed datastore.
+
+services:
+  pyrocore:
+    build:
+      context: ./vendor/pyronites
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_PATH: /data/pyrocore.db
+      HOST: 0.0.0.0
+      SESSION_COOKIE_SECURE: "false"
+      SESSION_COOKIE_SAMESITE: lax
+    volumes:
+      - pyrocore-data:/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      pyrocore:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      PYRONITES_URL: http://pyrocore:8000
+      PYRONITES_PROJECT: codementor
+      # For local runs the offline provider keeps the stack usable with no API
+      # key. Both of these must be false in production.
+      ALLOW_OFFLINE_PROVIDER: "true"
+      AUTH_AUTO_VERIFY_DEV: "true"
+      REQUIRE_VERIFIED_EMAIL_FOR_AI: "false"
+      PYRONITES_AUTO_MIGRATE: "true"
+      PYRONITES_KEY: ${PYRONITES_KEY:?set PYRONITES_KEY in .env - see scripts/README-key-setup.md}
+      AI_ANTHROPIC_KEY: ${AI_ANTHROPIC_KEY:-}
+      AI_OPENAI_KEY: ${AI_OPENAI_KEY:-}
+      EXTENSION_RETURN_ORIGINS: chrome-extension://invalid
+    ports:
+      - "8080:8000"
+
+volumes:
+  pyrocore-data:
