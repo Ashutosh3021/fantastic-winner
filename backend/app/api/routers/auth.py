@@ -19,10 +19,10 @@ from __future__ import annotations
 from typing import Annotated, Any
 from urllib.parse import urlencode, urlparse
 
-from fastapi import APIRouter, Body, Form, Query
+from fastapi import APIRouter, Body, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ...api.deps import Container
+from ...api.deps import API_PREFIX, Container
 from ...core.errors import BadRequest
 from ...core.logging import get_logger
 from ..dependencies import ContainerDep
@@ -142,6 +142,7 @@ async def extension_signup_page(
 
 @router.post("/extension/login")
 async def extension_login_submit(
+    request: Request,
     container: ContainerDep,
     email: Annotated[str, Form(max_length=200)],
     password: Annotated[str, Form(max_length=200)],
@@ -149,6 +150,7 @@ async def extension_login_submit(
 ) -> RedirectResponse:
     return await _complete(
         container,
+        request,
         email=email,
         password=password,
         return_to=return_to,
@@ -159,6 +161,7 @@ async def extension_login_submit(
 
 @router.post("/extension/signup")
 async def extension_signup_submit(
+    request: Request,
     container: ContainerDep,
     email: Annotated[str, Form(max_length=200)],
     password: Annotated[str, Form(max_length=200)],
@@ -166,6 +169,7 @@ async def extension_signup_submit(
 ) -> RedirectResponse:
     return await _complete(
         container,
+        request,
         email=email,
         password=password,
         return_to=return_to,
@@ -176,6 +180,7 @@ async def extension_signup_submit(
 
 async def _complete(
     container: Container,
+    request: Request,
     *,
     email: str,
     password: str,
@@ -205,9 +210,43 @@ async def _complete(
             _page(template, return_to=target, error=exc.message), status_code=400
         )
 
-    separator = "&" if "?" in target else "?"
-    location = f"{target}{separator}{urlencode({'code': code})}"
+    # End on our own https origin, never on the extension origin.
+    #
+    # A web page redirecting to chrome-extension:// is refused by Chrome with
+    # ERR_BLOCKED_BY_CLIENT, so a flow that returns to the extension by
+    # navigating there can never work. The extension watches this tab instead,
+    # which needs no browser permission to observe.
+    #
+    # return_to is still validated above: that proves the caller is an extension
+    # we recognise, which is what binds a code to one install.
+    base = str(request.base_url).rstrip("/")
+    location = f"{base}{API_PREFIX}/auth/extension/done?{urlencode({'code': code})}"
     return RedirectResponse(location, status_code=303)
+
+
+@router.get("/extension/done", response_class=HTMLResponse)
+async def extension_done(code: Annotated[str, Query(max_length=200)]) -> HTMLResponse:
+    """Where the sign-in flow ends.
+
+    Deliberately inert: it carries the code in its URL, confirms it, and lets
+    the extension read the URL out of the tab. Nothing here needs to call back
+    into the extension, which is exactly what the old redirect required and
+    exactly what Chrome forbids.
+    """
+    from html import escape
+
+    safe = escape(code[:8], quote=True)
+    return HTMLResponse(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<title>Signed in</title>"
+        "<style>body{font:16px system-ui,sans-serif;display:grid;place-items:center;"
+        "min-height:100vh;margin:0;background:#0f1115;color:#e8eaed;text-align:center}"
+        "p{color:#9aa0a6}</style></head><body><div>"
+        "<h1>You are signed in</h1>"
+        f"<p>Code {safe}&hellip; handed back to CodeMentor.</p>"
+        "<p>You can close this tab.</p>"
+        "</div></body></html>"
+    )
 
 
 @router.post("/extension/code")

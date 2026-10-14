@@ -56,6 +56,11 @@ from ..services.session_service import SessionService
 
 logger = get_logger(__name__)
 
+#: Every route the extension calls lives under this prefix. It lives here, not in
+#: ``app.main``, because the routers need it and importing it from main would be
+#: circular: main imports the routers.
+API_PREFIX = "/v1"
+
 #: Process-wide container holder. A module-level ``SimpleNamespace`` rather than
 #: a global, so tests can swap it and put the old one back.
 _state = SimpleNamespace(container=None)

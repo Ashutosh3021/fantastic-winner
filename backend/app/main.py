@@ -25,7 +25,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
 
-from .api.deps import build_container, set_container
+from .api.deps import API_PREFIX, build_container, set_container
 from .api.routers import account, auth, learning, progress
 from .core.config import get_settings
 from .core.errors import AppError
@@ -33,7 +33,6 @@ from .core.logging import configure_logging, get_logger, set_request_id
 
 logger = get_logger(__name__)
 
-API_PREFIX = "/v1"
 
 
 @contextlib.asynccontextmanager

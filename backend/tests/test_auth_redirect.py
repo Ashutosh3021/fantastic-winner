@@ -31,6 +31,46 @@ class TestAllowedRedirects:
         assert _safe_return_to("/index.html", ALLOWED) == "/index.html"
 
 
+class TestSignInFlowEndsOnHttps:
+    """The flow must never navigate a web page to chrome-extension://.
+
+    Chrome refuses that with ERR_BLOCKED_BY_CLIENT, which presented as "sign-in
+    just fails in the browser". The flow therefore ends on the backend's own
+    https origin and the extension reads the code out of the tab URL.
+    """
+
+    def test_done_route_exists(self) -> None:
+        from app.main import app
+
+        assert "/v1/auth/extension/done" in app.openapi()["paths"]
+
+    def test_done_page_is_inert_and_never_references_the_extension_scheme(
+        self,
+    ) -> None:
+        import asyncio
+
+        from app.api.routers.auth import extension_done
+
+        response = asyncio.run(extension_done(code="abcdef123456"))
+        body = response.body.decode("utf-8")
+        assert "chrome-extension://" not in body
+        assert response.status_code == 200
+
+    def test_done_page_escapes_the_code_prefix(self) -> None:
+        import asyncio
+
+        from app.api.routers.auth import extension_done
+
+        response = asyncio.run(extension_done(code='<script>alert(1)</script>'))
+        assert "<script>" not in response.body.decode("utf-8")
+
+    def test_return_to_is_still_validated_as_an_allowlist(self) -> None:
+        # The redirect no longer uses return_to, but it still proves the caller
+        # is an extension we recognise, which is what binds a code to one install.
+        with pytest.raises(BadRequest):
+            _safe_return_to("https://attacker.example/", ALLOWED)
+
+
 class TestRejectedRedirects:
     @pytest.mark.parametrize(
         "target",

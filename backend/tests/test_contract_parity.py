@@ -29,6 +29,9 @@ _SERVER_ONLY = {
     ("POST", "/v1/auth/extension/code"),
     ("POST", "/v1/auth/refresh"),
     ("POST", "/v1/auth/logout"),
+    # The sign-in flow ends here rather than navigating to chrome-extension://,
+    # which Chrome refuses with ERR_BLOCKED_BY_CLIENT.
+    ("GET", "/v1/auth/extension/done"),
 }
 
 

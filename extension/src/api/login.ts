@@ -61,11 +61,21 @@ function pickCode(returnedUrl: string): string | null {
   }
 }
 
+const DONE_PATH = `${API_PREFIX}/auth/extension/done`;
+
 async function hostedFlow(): Promise<AuthState> {
   const extensionOrigin = chrome.runtime.getURL("");
   const redirect = await chrome.tabs.create({ url: loginUrl(extensionOrigin), active: true });
   const tabId = redirect.id;
   if (tabId === undefined) throw new ApiFailure("unknown", "Could not open the sign-in page.");
+
+  // Watch for the backend's own confirmation page, not the extension origin.
+  //
+  // Navigating a web page to chrome-extension:// is refused by Chrome with
+  // ERR_BLOCKED_BY_CLIENT, so an earlier version of this flow could never
+  // complete in a real browser. The backend now ends on an https URL and we
+  // read the code out of the tab URL instead - observable with no permission.
+  const doneUrl = `${CONFIG.apiBaseUrl}${DONE_PATH}`;
 
   const finalUrl = await new Promise<string>((resolve, reject) => {
     const onUpdated = (
@@ -73,7 +83,7 @@ async function hostedFlow(): Promise<AuthState> {
       info: { status?: string; url?: string },
     ) => {
       if (updatedTabId !== tabId || info.status !== "complete" || !info.url) return;
-      if (!info.url.startsWith(extensionOrigin)) return;
+      if (!info.url.startsWith(doneUrl)) return;
       chrome.tabs.onUpdated.removeListener(onUpdated);
       resolve(info.url);
     };
