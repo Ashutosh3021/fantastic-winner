@@ -27,9 +27,26 @@ from typing import Any
 import httpx
 
 from ..core.config import Settings
-from ..core.errors import BadRequest, NotFound, UpstreamError
+from ..core.errors import BadRequest, NotFound, RateLimited, UpstreamError
 from ..core.logging import get_logger
 from .sql import safe_identifier
+
+
+def _retry_after(response: httpx.Response, attempt: int, *, floor: float = 1.0) -> float:
+    """How long to wait before retrying a rate-limited request.
+
+    Honours ``Retry-After`` when the upstream sends one, because it knows its own
+    window; otherwise backs off exponentially. Never returns less than ``floor``,
+    so a zero or malformed header cannot turn into a hot loop against a service
+    that is already asking us to slow down.
+    """
+    header = response.headers.get("retry-after")
+    if header:
+        try:
+            return max(floor, float(int(header)))
+        except (TypeError, ValueError):
+            pass
+    return max(floor, 2.0**attempt)
 
 logger = get_logger(__name__)
 
@@ -111,12 +128,15 @@ class PyronitesGateway:
     ) -> httpx.Response:
         self._require_config()
 
-        # Transient retries. A cold-starting datastore (the usual shape of a
-        # free-tier deploy) takes tens of seconds to answer and then serves fine,
-        # so failing the first request would take the whole API down over a
-        # condition that resolves itself. Retried only for transport errors and
-        # 5xx; a 4xx is a real answer and is returned to the caller untouched.
+        # Transient retries. Two conditions resolve themselves and must not fail
+        # a request: a cold-starting datastore (tens of seconds, then fine) and a
+        # rate limit (429, which by definition means "not now"). Treating 429 as
+        # fatal is what previously killed the whole deploy at startup.
+        #
+        # Only 4xx that mean something *are* returned immediately: a 400 is a bad
+        # statement and a 401 is a bad key, and retrying either just burns time.
         last_exc: httpx.HTTPError | None = None
+        rate_limited = False
         for attempt in range(1, self._max_attempts + 1):
             try:
                 response = await self._client.request(
@@ -137,7 +157,9 @@ class PyronitesGateway:
 
             if response.is_success or response.status_code in allow_status:
                 return response
-            if response.status_code < 500 or attempt >= self._max_attempts:
+
+            retryable = response.status_code >= 500 or response.status_code == 429
+            if not retryable or attempt >= self._max_attempts:
                 # Never echo the upstream body to a learner; it may contain SQL.
                 logger.warning(
                     "pyronites %s %s -> %s",
@@ -145,14 +167,39 @@ class PyronitesGateway:
                     url.split("/api/projects/")[-1],
                     response.status_code,
                 )
+                if response.status_code == 429:
+                    raise RateLimited(
+                        "The datastore is busy. Try again shortly.",
+                        retry_after_sec=int(_retry_after(response, attempt)),
+                    )
                 raise UpstreamError(f"Datastore returned {response.status_code}")
+
+            if response.status_code == 429:
+                rate_limited = True
+                wait = _retry_after(response, attempt)
+                logger.info(
+                    "pyronites %s %s rate limited, waiting %ss before retry %s",
+                    method,
+                    url.split("/api/projects/")[-1],
+                    wait,
+                    attempt + 1,
+                )
+                await asyncio.sleep(wait)
+                continue
+
             logger.info(
                 "pyronites %s %s -> %s, retrying",
                 method,
                 url.split("/api/projects/")[-1],
                 response.status_code,
             )
+            await asyncio.sleep(self._retry_backoff_s * attempt)
 
+        if rate_limited:
+            raise RateLimited(
+                "The datastore is busy. Try again shortly.",
+                retry_after_sec=int(self._retry_backoff_s * self._max_attempts) + 1,
+            )
         raise UpstreamError(
             f"Datastore unreachable: {type(last_exc).__name__ if last_exc else 'unknown'}"
         ) from last_exc
