@@ -1,5 +1,4 @@
 node_modules/
-.output/
 .wxt/
 stats.html
 *.zip
@@ -10,8 +9,6 @@ stats.html
 test-results/
 playwright-report/
 
-# local signing key and packaged builds
+# private signing key stays local; built extension is tracked
 *.pem
-*.crx
 keys/
-# releases/
