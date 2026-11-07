@@ -10,7 +10,7 @@ import { defineBackground } from "wxt/utils/define-background";
 
 import { call, type CallOptions } from "../src/api/client";
 import { ApiFailure, fallbackMessage } from "../src/api/errors";
-import { login, logout, authState } from "../src/api/login";
+import { completeHostedLogin, login, logout, authState } from "../src/api/login";
 import { uuid } from "../src/lib/async";
 import type { Msg, Res, ResMeta } from "../src/messaging";
 import type { RouteId } from "../src/api/routes";
@@ -66,6 +66,20 @@ async function handleApi(msg: Extract<Msg, { t: "api" }>): Promise<Res<unknown>>
 }
 
 export default defineBackground(() => {
+  // Top-level, deliberately. MV3 suspends an idle worker after ~30 s; a tab
+  // event wakes it and re-runs this module, and only top-level listeners are
+  // registered in time to receive that event. Registering this inside the
+  // `auth.login` handler (the old behavior) meant it was dead by the time the
+  // learner finished typing credentials, so the one-time code was never
+  // exchanged and the popup stayed signed out even though the sign-in page said
+  // it had succeeded.
+  chrome.tabs.onUpdated.addListener((_tabId, info) => {
+    if (info.status !== "complete" || !info.url) return;
+    void completeHostedLogin(info.url).catch((cause) => {
+      console.warn("[codementor:auth] could not finish sign-in", cause);
+    });
+  });
+
   chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
     const msg = raw as Msg;
     if (!msg || typeof msg.t !== "string") return false;

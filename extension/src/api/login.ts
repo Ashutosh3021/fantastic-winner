@@ -65,6 +65,7 @@ function pickCode(returnedUrl: string): string | null {
 }
 
 const DONE_PATH = `${API_PREFIX}/auth/extension/done`;
+const DONE_PREFIX = `${CONFIG.apiBaseUrl}${DONE_PATH}`;
 
 /** Last `/me` profile, used only when the network cannot answer. */
 const authProfileStore = storage.defineItem<AuthState | null>("local:auth:profile", {
@@ -72,42 +73,73 @@ const authProfileStore = storage.defineItem<AuthState | null>("local:auth:profil
   version: 1,
 });
 
+/**
+ * Codes already traded for tokens.
+ *
+ * The completion can be reached twice - once by the tab listener and once by the
+ * still-running `auth.login` handler - and a login code is single-use, so a
+ * second exchange would fail and look like the whole sign-in failed. Persisted
+ * because the worker may have been revived for the second event.
+ */
+const handledCodeStore = storage.defineItem<string | null>("local:auth:handled-code", {
+  fallback: null,
+  version: 1,
+});
+
+let exchangingCode: string | null = null;
+
+/**
+ * Finish a hosted sign-in from the tab URL, if that is what this URL is.
+ *
+ * This is called from a *top-level* `tabs.onUpdated` listener in the service
+ * worker, not from the `auth.login` handler. That distinction is the whole fix:
+ * opening the sign-in tab closes the popup, and MV3 suspends an idle worker after
+ * about 30 seconds, so a listener registered inside the handler is gone long
+ * before the learner has typed a password and submitted the form. The top-level
+ * listener is re-registered on every worker revival, which is what a tab event
+ * does, so the code still gets exchanged whenever the redirect lands.
+ */
+export async function completeHostedLogin(url: string): Promise<boolean> {
+  if (!url.startsWith(DONE_PREFIX)) return false;
+  const code = pickCode(url);
+  if (!code) return false;
+  if (exchangingCode === code) return true;
+
+  exchangingCode = code;
+  try {
+    if ((await handledCodeStore.getValue()) === code) return true;
+    await setTokens(await exchangeCode(code));
+    await handledCodeStore.setValue(code);
+    return true;
+  } finally {
+    exchangingCode = null;
+  }
+}
+
 async function hostedFlow(): Promise<AuthState> {
   const extensionOrigin = chrome.runtime.getURL("");
-  const redirect = await chrome.tabs.create({ url: loginUrl(extensionOrigin), active: true });
-  const tabId = redirect.id;
+  const tab = await chrome.tabs.create({ url: loginUrl(extensionOrigin), active: true });
+  const tabId = tab.id;
   if (tabId === undefined) throw new ApiFailure("unknown", "Could not open the sign-in page.");
 
-  // Watch for the backend's own confirmation page, not the extension origin.
-  //
-  // Navigating a web page to chrome-extension:// is refused by Chrome with
-  // ERR_BLOCKED_BY_CLIENT, so an earlier version of this flow could never
-  // complete in a real browser. The backend now ends on an https URL and we
-  // read the code out of the tab URL instead - observable with no permission.
-  const doneUrl = `${CONFIG.apiBaseUrl}${DONE_PATH}`;
+  // Wait for the token store to fill rather than for a tab event in this scope.
+  // The exchange itself happens in `completeHostedLogin`, so this can die with
+  // the worker without losing the sign-in; the popup simply re-reads the tokens
+  // next time it opens. Each storage read is also an extension API call, which
+  // keeps the worker alive while this is running.
+  const deadline = Date.now() + 120_000;
+  let signedIn = false;
+  while (Date.now() < deadline) {
+    const { accessToken } = await getTokens();
+    if (accessToken) {
+      signedIn = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 
-  const finalUrl = await new Promise<string>((resolve, reject) => {
-    const onUpdated = (
-      updatedTabId: number,
-      info: { status?: string; url?: string },
-    ) => {
-      if (updatedTabId !== tabId || info.status !== "complete" || !info.url) return;
-      if (!info.url.startsWith(doneUrl)) return;
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      resolve(info.url);
-    };
-    chrome.tabs.onUpdated.addListener(onUpdated);
-    setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(onUpdated);
-      reject(new ApiFailure("unknown", "Sign-in timed out."));
-    }, 120_000);
-  });
-
-  const code = pickCode(finalUrl);
   await chrome.tabs.remove(tabId).catch(() => undefined);
-  if (!code) throw new ApiFailure("unauthorized", "The sign-in page did not return a code.");
-
-  await setTokens(await exchangeCode(code));
+  if (!signedIn) throw new ApiFailure("unknown", "Sign-in timed out.");
   return { signedIn: true, email: null, emailVerified: true };
 }
 
