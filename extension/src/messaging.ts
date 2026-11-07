@@ -5,7 +5,7 @@
  * a route id and gets back a typed result.
  */
 
-import type { ApiError, PreferencesPatch } from "./schemas";
+import type { ApiError } from "./schemas";
 import type { ResponseOf, RouteId } from "./api/routes";
 
 export type ApiMessage = {
@@ -22,11 +22,9 @@ export type AuthMessage =
   | { t: "auth.logout" }
   | { t: "auth.state" };
 
-export type PrefsMessage = { t: "prefs.set"; prefs: PreferencesPatch };
-
 export type LogMessage = { t: "log"; level: "info" | "warn" | "error"; msg: string };
 
-export type Msg = ApiMessage | AuthMessage | PrefsMessage | LogMessage;
+export type Msg = ApiMessage | AuthMessage | LogMessage;
 
 export type ResMeta = {
   cached: boolean;
@@ -58,8 +56,6 @@ export type PayloadOf<M> = M extends { t: "api"; route: infer R extends RouteId 
       ? null
       : M extends { t: "auth.state" }
         ? AuthState
-        : M extends { t: "prefs.set" }
-          ? null
-          : null;
+        : null;
 
 export type ResFor<M extends Msg> = Res<PayloadOf<M>>;

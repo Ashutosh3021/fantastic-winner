@@ -30,12 +30,19 @@ export const prefsVersionStore = storage.defineItem<number>("local:prefs:version
 /** UI-only overlay state, persisted per problem slug (§5.6). */
 export type OverlayUiState = {
   collapsed: boolean;
+  /** Legacy global flag, kept so an older stored value still reads. */
   checklistRevealed: boolean;
+  checklistRevealedBySlug?: Record<string, boolean>;
   lastSlug: string;
 };
 
 export const overlayStateStore = storage.defineItem<OverlayUiState>("local:ui", {
-  fallback: { collapsed: false, checklistRevealed: false, lastSlug: "" },
+  fallback: {
+    collapsed: false,
+    checklistRevealed: false,
+    checklistRevealedBySlug: {},
+    lastSlug: "",
+  },
   version: 1,
 });
 
@@ -51,6 +58,20 @@ export async function setPrefs(next: Partial<Preferences>): Promise<Preferences>
 export async function patchOverlayState(patch: Partial<OverlayUiState>): Promise<void> {
   const current = await overlayStateStore.getValue();
   await overlayStateStore.setValue({ ...current, ...patch });
+}
+
+/** Remember whether the earned checklist was opened, per problem slug. */
+export async function setChecklistRevealed(slug: string, revealed: boolean): Promise<void> {
+  const current = await overlayStateStore.getValue();
+  await overlayStateStore.setValue({
+    ...current,
+    checklistRevealed: revealed,
+    checklistRevealedBySlug: {
+      ...(current.checklistRevealedBySlug ?? {}),
+      [slug]: revealed,
+    },
+    lastSlug: slug,
+  });
 }
 
 /** Server time is authoritative (§16.5); the client only formats the label. */

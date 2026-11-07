@@ -7,3 +7,5 @@ stats.html
 .env.local
 .env.*.local
 .DS_Store
+test-results/
+playwright-report/

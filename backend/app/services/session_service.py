@@ -23,6 +23,7 @@ from ..core.logging import get_logger
 from ..policies import reveal_boundary as boundary
 from ..repositories.store import (
     AttemptRepository,
+    HintStateRepository,
     SessionContentRepository,
     SessionRepository,
     now_iso,
@@ -72,6 +73,21 @@ class SessionBundle:
         return int(self.session.get("unlocked_index", 0) or 0)
 
     @property
+    def current_index(self) -> int:
+        """The question the learner may work on.
+
+        Older rows were written before ``store_plan`` moved ``unlocked_index``
+        to 1, so a generated plan could still report index 0 while every answer
+        check used ``index > unlocked_index`` and rejected question 1. Treat a
+        generated plan as having its first question unlocked regardless of the
+        stale column value.
+        """
+        if not self.plan or not self.plan.questions:
+            return 0
+        total = len(self.plan.questions)
+        return max(1, min(self.unlocked_index, total))
+
+    @property
     def passed_count(self) -> int:
         return int(self.session.get("passed_count", 0) or 0)
 
@@ -87,11 +103,13 @@ class SessionService:
         sessions: SessionRepository,
         content: SessionContentRepository,
         attempts: AttemptRepository,
+        hints: HintStateRepository,
         microq: MicroQuestionService,
     ) -> None:
         self.sessions = sessions
         self.content = content
         self.attempts = attempts
+        self.hints = hints
         self.microq = microq
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -144,6 +162,29 @@ class SessionService:
             return
         await self.update_progress(session_id, status=SessionStatus.COMPLETED)
 
+    async def switch_approach(
+        self, bundle: SessionBundle, *, approach_id: str
+    ) -> dict[str, Any]:
+        """Point the session at a different approach and discard its plan.
+
+        The old plan belonged to the old approach; keeping it would let a
+        learner answer questions for an approach they are no longer studying.
+        Attempt and hint state are scoped to those old questions and go with the
+        content. XP and mistakes are learned history and stay.
+        """
+        await self.content.delete_for_session(bundle.id)
+        await self.attempts.delete_for_session(bundle.id)
+        await self.hints.delete_for_session(bundle.id)
+        current_version = int(bundle.session.get("content_version", 1) or 1)
+        return await self.update_progress(
+            bundle.id,
+            selected_approach=approach_id,
+            unlocked_index=0,
+            passed_count=0,
+            question_count=0,
+            content_version=current_version + 1,
+        )
+
     # ── loading ──────────────────────────────────────────────────────────────
 
     async def load(self, session_id: str, *, user_id: str) -> SessionBundle:
@@ -180,6 +221,14 @@ class SessionService:
         prompt_version: str,
         content_version: str,
     ) -> None:
+        # A new content version is a full snapshot, so carry the concept and
+        # simplification forward. Dropping them here made a later reload pay for
+        # the concept call again after the plan had been generated.
+        carried = {
+            key: bundle.content.get(key)
+            for key in ("concept_json", "simplify_json", "simplify_level")
+            if bundle.content and bundle.content.get(key) is not None
+        }
         await self.content.upsert_version(
             session_id=bundle.id,
             approach_id=bundle.approach_id,
@@ -190,10 +239,17 @@ class SessionService:
             content_version=content_version,
             plan_json=MicroQuestionService.shape_to_dict(shape),
             checklist_json=json.dumps(shape.checklist, ensure_ascii=False),
+            **carried,
         )
         # Question count is part of the reveal state, so it moves in the same
-        # place the plan does rather than being derived per request.
-        await self.update_progress(bundle.id, question_count=len(shape.questions))
+        # place the plan does rather than being derived per request. The first
+        # question is unlocked by the plan itself; leaving the column at 0 made
+        # the answer route reject question 1 as "locked".
+        await self.update_progress(
+            bundle.id,
+            question_count=len(shape.questions),
+            unlocked_index=max(1, bundle.unlocked_index) if shape.questions else 0,
+        )
 
     # ── projections ──────────────────────────────────────────────────────────
 
@@ -224,14 +280,15 @@ class SessionService:
         """
         plan = bundle.plan
         question: CurrentQuestion | None = None
-        if plan and plan.questions and bundle.unlocked_index >= 1:
-            current = self._question_at(plan, min(bundle.unlocked_index, len(plan.questions)))
-            attempts = await self.attempts.attempt_count(bundle.id, int(current.get("index", 1)))
+        if plan and plan.questions and bundle.current_index >= 1:
+            current = self._question_at(plan, bundle.current_index)
+            index = int(current.get("index", 1))
+            attempts = await self.attempts.attempt_count(bundle.id, index)
             question = self.microq.project_question(
                 current,
                 total=len(plan.questions),
                 attempts=attempts,
-                hints_used=0,
+                hints_used=await self.hints_used(bundle.id, index),
             )
 
         total = len(plan.questions) if plan else 0
@@ -281,6 +338,19 @@ class SessionService:
 
     async def attempt_count(self, session_id: str, index: int) -> int:
         return await self.attempts.attempt_count(session_id, index)
+
+    async def hints_used(self, session_id: str, index: int) -> int:
+        """Hints the learner has seen for a question.
+
+        Attempts recorded ``hints_used`` before dedicated state existed, so take
+        the larger of the two. A downgrade must not re-show hint 1.
+        """
+        persisted = await self.hints.get(session_id, index)
+        legacy = 0
+        for attempt in await self.attempts.for_session(session_id):
+            if int(attempt.get("question_index", 0)) == index:
+                legacy = max(legacy, int(attempt.get("hints_used", 0) or 0))
+        return max(persisted, min(3, legacy))
 
     async def problem_view(self, bundle: SessionBundle) -> dict[str, Any]:
         """Rebuild the problem payload the prompts and validators expect.

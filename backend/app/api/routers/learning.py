@@ -40,16 +40,22 @@ from ...schemas.models import (
     ApproachesRequest,
     ApproachesResponse,
     ChecklistResponse,
+    ConceptCard,
+    ConceptResponse,
     CreateSessionRequest,
     CurrentQuestion,
     GenerateQuestionsResponse,
     HintResponse,
     PatchSessionRequest,
     ProblemData,
+    RevealResponse,
     SessionState,
     SessionSummary,
+    SimplifiedConcept,
+    SimplifyResponse,
 )
 from ...services.answer_service import AnswerContext
+from ...services.concept_service import MAX_SIMPLIFICATION_LEVELS
 from ..dependencies import (
     CallerDep,
     ContainerDep,
@@ -90,13 +96,17 @@ async def create_session(
         enforced=container.settings.auth.require_verified_email
     )
 
-    active = await container.sessions.count_in_progress(identity.user_id)
-    if active >= container.settings.credits.max_active_sessions:
-        from ...core.errors import ActiveSessionLimit
+    # Resume must be possible at the limit: the cap applies to *new* problems,
+    # not to reopening one the learner already has in flight.
+    existing = await container.sessions.active_for(identity.user_id, body.slug)
+    if existing is None:
+        active = await container.sessions.count_in_progress(identity.user_id)
+        if active >= container.settings.credits.max_active_sessions:
+            from ...core.errors import ActiveSessionLimit
 
-        raise ActiveSessionLimit(
-            f"You have {active} problems open. Finish one before starting another."
-        )
+            raise ActiveSessionLimit(
+                f"You have {active} problems open. Finish one before starting another."
+            )
 
     problem = _problem_dict(body.problem)
     # Mode and language come from the learner's saved preferences, not from the
@@ -154,74 +164,127 @@ async def patch_session(
     enforce_rate_limit(container, caller, route_class="light")
     bundle = await container.learning.load(session_id, user_id=caller.identity.user_id)
 
+    switched = body.approach_id is not None and body.approach_id != bundle.approach_id
+    if switched:
+        if body.status == "completed":
+            await container.learning.close(
+                session_id, user_id=caller.identity.user_id
+            )
+        updated = await container.learning.switch_approach(
+            bundle, approach_id=str(body.approach_id)
+        )
+        if body.status is not None and body.status != "completed":
+            updated = await container.learning.update_progress(
+                session_id, status=body.status
+            )
+        return await container.learning.summary(updated)
+
     if body.status == "completed":
         await container.learning.close(session_id, user_id=caller.identity.user_id)
-    fields: dict[str, Any] = {}
-    if body.approach_id is not None:
-        fields["selected_approach"] = body.approach_id
+        refreshed = await container.sessions.require(session_id)
+        return await container.learning.summary(refreshed)
     if body.status is not None:
-        fields["status"] = body.status
-
-    updated = await container.learning.update_progress(session_id, **fields)
-    return await container.learning.summary(updated or bundle.session)
+        updated = await container.learning.update_progress(
+            session_id, status=body.status
+        )
+        return await container.learning.summary(updated)
+    return await container.learning.summary(bundle.session)
 
 
 # ── concept ────────────────────────────────────────────────────────────────
 
 
-@router.post("/sessions/{session_id}/concept")
+@router.post("/sessions/{session_id}/concept", response_model=ConceptResponse)
 async def read_concept(
     container: ContainerDep,
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
-) -> dict[str, Any]:
+) -> ConceptResponse:
+    """Return the concept card. This is part of the plan, not a credit event.
+
+    Credits meter micro-questions and analysis (§10.1). Charging for the concept
+    made a required step cost twice, and a client retry with a fresh
+    Idempotency-Key could not be recognised as the same request. The card is
+    cached on the session so revisiting it is a database read.
+    """
     enforce_rate_limit(container, caller, route_class="heavy")
     identity = caller.identity
     identity.require_verified(enforced=container.settings.auth.require_verified_email)
     await container.budget.require_not_degraded()
 
     bundle = await container.learning.load(session_id, user_id=identity.user_id)
-    problem = await container.learning.problem_view(bundle)
+    cached = (bundle.content or {}).get("concept_json")
+    if cached:
+        card = ConceptCard.model_validate_json(cached)
+    else:
+        problem = await container.learning.problem_view(bundle)
+        card = await container.concept.build_card(
+            problem=problem,
+            approach_id=bundle.approach_id,
+            approach_name=bundle.approach_id,
+            language=bundle.language,
+            mode=bundle.mode,
+            client_ip=caller.client_ip,
+        )
+        carried = {
+            key: bundle.content.get(key)
+            for key in ("plan_json", "checklist_json", "simplify_json", "simplify_level")
+            if bundle.content and bundle.content.get(key) is not None
+        }
+        await container.session_content.upsert_version(
+            session_id=session_id,
+            approach_id=bundle.approach_id,
+            version=int((bundle.content or {}).get("version", 0) or 0) + 1
+            if bundle.content
+            else 1,
+            prompt_version="v1",
+            content_version="v1",
+            concept_json=card.model_dump_json(by_alias=True),
+            **carried,
+        )
+    return ConceptResponse(session_id=session_id, card=card)
 
-    key = require_idempotency_key(caller)
-    await _spend_credit(container, caller, key, session_id, reserve_n=1)
 
-    card = await container.concept.build_card(
-        problem=problem,
-        approach_id=bundle.approach_id,
-        approach_name=bundle.approach_id,
-        language=bundle.language,
-        mode=bundle.mode,
-        client_ip=caller.client_ip,
-    )
-    return {"session_id": session_id, "card": card.model_dump(by_alias=True)}
-
-
-@router.post("/sessions/{session_id}/concept/simplify")
+@router.post(
+    "/sessions/{session_id}/concept/simplify", response_model=SimplifyResponse
+)
 async def simplify_concept(
     container: ContainerDep,
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
-) -> dict[str, Any]:
+) -> SimplifyResponse:
     enforce_rate_limit(container, caller, route_class="heavy")
     identity = caller.identity
     identity.require_verified(enforced=container.settings.auth.require_verified_email)
     await container.budget.require_not_degraded()
 
     bundle = await container.learning.load(session_id, user_id=identity.user_id)
+    content = bundle.content or {}
+    current = int(content.get("simplify_level", 0) or 0)
+
+    # The two-level ceiling is enforced here, not only in the prompt. A third
+    # click returns the cached level-2 wording instead of spending another call.
+    if current >= MAX_SIMPLIFICATION_LEVELS and content.get("simplify_json"):
+        return SimplifyResponse(
+            session_id=session_id,
+            simplified=SimplifiedConcept.model_validate_json(content["simplify_json"]),
+        )
+
     problem = await container.learning.problem_view(bundle)
+    card_raw = content.get("concept_json")
+    if card_raw:
+        card = ConceptCard.model_validate_json(card_raw)
+    else:
+        card = await container.concept.build_card(
+            problem=problem,
+            approach_id=bundle.approach_id,
+            approach_name=bundle.approach_id,
+            language=bundle.language,
+            mode=bundle.mode,
+            client_ip=caller.client_ip,
+        )
 
-    card = await container.concept.build_card(
-        problem=problem,
-        approach_id=bundle.approach_id,
-        approach_name=bundle.approach_id,
-        language=bundle.language,
-        mode=bundle.mode,
-        client_ip=caller.client_ip,
-    )
-
-    current = int(bundle.content.get("simplify_level", 0) or 0) if bundle.content else 0
-    level = min(current + 1, 2)
+    level = min(current + 1, MAX_SIMPLIFICATION_LEVELS)
     simplified = await container.concept.simplify(
         problem=problem,
         approach_id=bundle.approach_id,
@@ -234,15 +297,14 @@ async def simplify_concept(
     await container.session_content.upsert_version(
         session_id=session_id,
         approach_id=bundle.approach_id,
-        version=int((bundle.content or {}).get("version", 1) or 1),
+        version=int(content.get("version", 1) or 1),
         prompt_version="v1",
         content_version="v1",
         simplify_level=level,
+        simplify_json=simplified.model_dump_json(by_alias=True),
+        concept_json=content.get("concept_json"),
     )
-    return {
-        "session_id": session_id,
-        "simplified": simplified.model_dump(by_alias=True),
-    }
+    return SimplifyResponse(session_id=session_id, simplified=simplified)
 
 
 # ── micro-questions ────────────────────────────────────────────────────────
@@ -265,13 +327,14 @@ async def generate_questions(
     plan = bundle.plan
     if plan is not None and plan.questions:
         # Serving an existing plan is free and must not re-charge: a reload is
-        # not a new request for work.
-        first = plan.questions[0]
+        # not a new request for work. Return the question the learner is on,
+        # not question 1, so reload does not rewind progress.
+        state = await container.learning.state(bundle)
+        if state.question is None:
+            raise QuestionLocked("Generate the questions first.")
         return GenerateQuestionsResponse(
             session_id=session_id,
-            question=container.microq.project_question(
-                first, total=len(plan.questions)
-            ),
+            question=state.question,
             credits_charged=0,
         )
 
@@ -356,6 +419,11 @@ async def request_hint(
     question = container.answers.question_at(plan, index)
     if question is None:
         raise BadRequest("That question is not part of this plan.")
+
+    # Read the durable count before the AI call; only advance after the detail
+    # exists, so a failed generation does not consume a hint the learner never
+    # saw.
+    used = await container.learning.hints_used(session_id, index)
     detail = await container.microq.ensure_detail(
         problem=await container.learning.problem_view(bundle),
         approach_id=bundle.approach_id,
@@ -365,18 +433,58 @@ async def request_hint(
         mode=bundle.mode,
         client_ip=caller.client_ip,
     )
+    consumed = await container.hints.advance(session_id, index, floor=used)
+    return container.microq.next_hint(
+        detail, hints_used=max(0, consumed - 1), index=index
+    )
 
-    hints_used = await _hints_used(container, session_id, index)
 
-    return container.microq.next_hint(detail, hints_used=hints_used, index=index)
+@router.post(
+    "/sessions/{session_id}/micro-questions/{index}/reveal",
+    response_model=RevealResponse,
+)
+async def reveal_step(
+    container: ContainerDep,
+    caller: CallerDep,
+    session_id: Annotated[str, Path(max_length=64)],
+    index: Annotated[int, Path(ge=1, le=50)],
+) -> RevealResponse:
+    """Release the current step on explicit request (§10.8).
 
+    This is not an answer and does not consume an attempt or a credit. It is the
+    backend's half of the "I'm stuck" button; the client stops offering it once
+    the cap has already released the same text through feedback.
+    """
+    enforce_rate_limit(container, caller, route_class="light")
+    bundle = await container.learning.load(session_id, user_id=caller.identity.user_id)
+    plan = bundle.plan
+    if plan is None or bundle.current_index != index:
+        raise QuestionLocked("That step is not unlocked yet.")
 
-async def _hints_used(container: ContainerDep, session_id: str, index: int) -> int:
-    rows = await container.attempts.for_session(session_id)
-    return sum(
-        int(row.get("hints_used", 0) or 0)
-        for row in rows
-        if int(row.get("question_index", 0)) == index
+    question = container.answers.question_at(plan, index)
+    if question is None:
+        raise QuestionLocked("That step is not unlocked yet.")
+
+    detail = await container.microq.ensure_detail(
+        problem=await container.learning.problem_view(bundle),
+        approach_id=bundle.approach_id,
+        question=question,
+        prior_prompts=[str(q.get("prompt", "")) for q in plan.questions[: index - 1]],
+        language=bundle.language,
+        mode=bundle.mode,
+        client_ip=caller.client_ip,
+    )
+    released = boundary.step_explanation_released(
+        attempts=0, attempt_cap=container.settings.credits.attempt_cap,
+        explicit_request=True,
+    )
+    if not released or not detail.step_explanation:
+        raise BadRequest("That step explanation is not available yet.")
+    return RevealResponse(
+        session_id=session_id,
+        index=index,
+        step_explanation=detail.step_explanation,
+        revealed=True,
     )
 
 
@@ -398,7 +506,7 @@ async def submit_answer(
     ctx = AnswerContext(
         session_id=session_id,
         user_id=caller.identity.user_id,
-        unlocked_index=bundle.unlocked_index,
+        unlocked_index=bundle.current_index,
         passed_count=bundle.passed_count,
         plan=plan,
         problem=await container.learning.problem_view(bundle),

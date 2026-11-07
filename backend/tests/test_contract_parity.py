@@ -10,6 +10,7 @@ A rename on either side fails here rather than as a 404 in front of a learner.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -28,7 +29,6 @@ _SERVER_ONLY = {
     ("POST", "/v1/auth/extension/signup"),
     ("POST", "/v1/auth/extension/code"),
     ("POST", "/v1/auth/refresh"),
-    ("POST", "/v1/auth/logout"),
     # The sign-in flow ends here rather than navigating to chrome-extension://,
     # which Chrome refuses with ERR_BLOCKED_BY_CLIENT.
     ("GET", "/v1/auth/extension/done"),
@@ -55,6 +55,54 @@ def _client_routes(extension_root: Path) -> set[tuple[str, str]]:
     return routes
 
 
+def _client_idempotent_routes(extension_root: Path) -> set[tuple[str, str]]:
+    """Routes the extension marks `idempotent: true`, i.e. sends a key for."""
+    source = (extension_root / "src" / "api" / "routes.ts").read_text(encoding="utf-8")
+    routes: set[tuple[str, str]] = set()
+    for block in re.findall(r"\n  \w+: \{(.*?)\n  \},", source, re.DOTALL):
+        if "idempotent: true" not in block:
+            continue
+        method = re.search(r'method:\s*"(\w+)"', block)
+        path = re.search(r'path:\s*"([^"]+)"', block)
+        if method and path:
+            route_path = path.group(1)
+            for old, new in _PARAM_MAP.items():
+                route_path = route_path.replace(old, new)
+            routes.add((method.group(1).upper(), "/v1" + route_path))
+    return routes
+
+
+def _server_idempotent_routes() -> set[tuple[str, str]]:
+    """Route decorators whose handler calls `require_idempotency_key`."""
+    routes: set[tuple[str, str]] = set()
+    routers = Path(__file__).parents[1] / "app" / "api" / "routers"
+    for file in routers.glob("*.py"):
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            requires_key = any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "require_idempotency_key"
+                for child in ast.walk(node)
+            )
+            if not requires_key:
+                continue
+            for decorator in node.decorator_list:
+                if not (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr in {"get", "post", "put", "patch", "delete"}
+                    and decorator.args
+                    and isinstance(decorator.args[0], ast.Constant)
+                    and isinstance(decorator.args[0].value, str)
+                ):
+                    continue
+                routes.add((decorator.func.attr.upper(), "/v1" + decorator.args[0].value))
+    return routes
+
+
 class TestRouteParity:
     def test_client_route_table_is_parsed(self, extension_root: Path) -> None:
         # A silent regex failure would make every other test in this file pass
@@ -74,6 +122,14 @@ class TestRouteParity:
     def test_server_only_routes_are_all_allowlisted(self) -> None:
         """Every extra route needs a stated reason, so the list cannot grow silently."""
         assert ("GET", "/health") in _SERVER_ONLY
+
+    def test_every_server_idempotent_route_sends_a_key(self, extension_root: Path) -> None:
+        """A server route that requires `Idempotency-Key` must be marked
+        `idempotent: true` on the client, or every call 400s before it runs."""
+        required = _server_idempotent_routes()
+        assert required, "AST scan found no require_idempotency_key routes"
+        missing = sorted(required - _client_idempotent_routes(extension_root))
+        assert not missing, f"client does not send keys for: {missing}"
 
 
 class TestResponseModels:

@@ -1,7 +1,10 @@
+import { storage } from "wxt/utils/storage";
+
 import { API_PREFIX, CONFIG } from "../config";
 import type { AuthTokens } from "./auth";
 import { clearTokens, getTokens, setTokens } from "./auth";
 import { clearLocal } from "./cache";
+import { call } from "./client";
 import { ApiFailure } from "./errors";
 import type { AuthState } from "../messaging";
 
@@ -63,6 +66,12 @@ function pickCode(returnedUrl: string): string | null {
 
 const DONE_PATH = `${API_PREFIX}/auth/extension/done`;
 
+/** Last `/me` profile, used only when the network cannot answer. */
+const authProfileStore = storage.defineItem<AuthState | null>("local:auth:profile", {
+  fallback: null,
+  version: 1,
+});
+
 async function hostedFlow(): Promise<AuthState> {
   const extensionOrigin = chrome.runtime.getURL("");
   const redirect = await chrome.tabs.create({ url: loginUrl(extensionOrigin), active: true });
@@ -121,12 +130,41 @@ export async function login(provider: string): Promise<AuthState> {
 }
 
 export async function logout(): Promise<void> {
+  const { refreshToken } = await getTokens();
+  if (refreshToken) {
+    // Revoke server-side first, but never let a failed revocation keep the
+    // learner signed in locally.
+    await call("logout", {
+      body: { refresh_token: refreshToken },
+      anonymous: true,
+    }).catch(() => undefined);
+  }
   await clearTokens();
   await clearLocal();
+  await authProfileStore.setValue(null);
 }
 
-/** Local-only truth so the popup can render before the first network call. */
+/** Server-backed auth truth, with the last profile as an offline fallback. */
 export async function authState(): Promise<AuthState> {
   const { accessToken } = await getTokens();
-  return { signedIn: Boolean(accessToken), email: null, emailVerified: false };
+  if (!accessToken) return { signedIn: false, email: null, emailVerified: false };
+
+  try {
+    const res = await call("me");
+    const next: AuthState = {
+      signedIn: true,
+      email: res.data.email || null,
+      emailVerified: res.data.email_verified,
+    };
+    await authProfileStore.setValue(next);
+    return next;
+  } catch (cause) {
+    if (cause instanceof ApiFailure && cause.code === "unauthorized") {
+      await clearTokens();
+      await authProfileStore.setValue(null);
+      return { signedIn: false, email: null, emailVerified: false };
+    }
+    const cached = await authProfileStore.getValue();
+    return cached ?? { signedIn: true, email: null, emailVerified: false };
+  }
 }

@@ -81,9 +81,6 @@ export default defineBackground(() => {
           return { ok: true, data: null, meta: toResMeta({}) };
         case "auth.state":
           return { ok: true, data: await authState(), meta: toResMeta({}) };
-        case "prefs.set":
-          await call("preferences", { body: msg.prefs });
-          return { ok: true, data: null, meta: toResMeta({}) };
         case "log":
           console.warn(`[codementor:${msg.level}] ${msg.msg}`);
           return { ok: true, data: null, meta: toResMeta({}) };

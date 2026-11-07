@@ -12,6 +12,8 @@ import { readFileSync } from "node:fs";
  * backend. Reading it directly removes that dependency.
  */
 function envFromFile(path: string, variable: string, fallback: string): string {
+  const fromProcess = process.env[variable]?.trim().replace(/\/+$/, "");
+  if (fromProcess) return fromProcess;
   try {
     const raw = readFileSync(path, "utf8");
     const match = raw.match(new RegExp(`^${variable}=(.*)$`, "m"));
@@ -22,6 +24,8 @@ function envFromFile(path: string, variable: string, fallback: string): string {
   }
 }
 
+const PLACEHOLDER_API_BASE_URL = "https://api.codementor.example";
+
 /**
  * The backend origin. It has to be known before any code runs because it
  * appears in `host_permissions`.
@@ -29,8 +33,17 @@ function envFromFile(path: string, variable: string, fallback: string): string {
 const API_BASE_URL = envFromFile(
   ".env",
   "VITE_API_BASE_URL",
-  "https://api.codementor.example",
+  PLACEHOLDER_API_BASE_URL,
 );
+
+// A production build aimed at the placeholder cannot reach a real backend, and
+// the failure otherwise appears much later as a Chrome host-permission error.
+// Dev builds may keep the fallback so the UI can be worked on without a server.
+if (process.env.NODE_ENV === "production" && API_BASE_URL === PLACEHOLDER_API_BASE_URL) {
+  throw new Error(
+    "VITE_API_BASE_URL is still the placeholder. Create extension/.env from .env.example before a production build.",
+  );
+}
 
 /**
  * Login flow for the Pyronites account system.

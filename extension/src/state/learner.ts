@@ -83,6 +83,7 @@ type LearnerState = {
   simplifiedWhy: string | null;
 
   question: CurrentQuestion | null;
+  questionStartedAt: number;
   draft: DraftAnswer;
   feedback: AnswerResponse | null;
   hint: HintResponse | null;
@@ -108,10 +109,12 @@ type LearnerState = {
   setLanguage: (language: Language) => void;
   setDraft: (draft: Partial<DraftAnswer>) => void;
 
+  refreshUsage: () => Promise<void>;
+  resumeSession: () => Promise<boolean>;
   loadApproaches: () => Promise<void>;
   chooseApproach: (approachId: string) => Promise<void>;
   switchApproach: (approachId: string) => Promise<void>;
-  loadConcept: (simplify?: boolean) => Promise<void>;
+  loadConcept: (simplify?: boolean) => Promise<boolean>;
   startQuestions: () => Promise<void>;
   submitAnswer: () => Promise<void>;
   requestHint: () => Promise<void>;
@@ -160,6 +163,7 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
   simplifiedWhy: null,
 
   question: null,
+  questionStartedAt: 0,
   draft: EMPTY_DRAFT,
   feedback: null,
   hint: null,
@@ -189,6 +193,86 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
   setDraft: (draft) => set((state) => ({ draft: { ...state.draft, ...draft } })),
   setLanguage: (language) => set({ language }),
 
+  refreshUsage: async () => {
+    try {
+      const res = await api("usage", {});
+      set({ usage: res.data });
+    } catch {
+      // A stale chip is better than replacing the whole overlay with an error.
+    }
+  },
+
+  resumeSession: async () => {
+    const problem = get().problem;
+    if (!problem) return false;
+    set({ pending: "session", error: null });
+    try {
+      const list = await api("sessionsList", {});
+      const active = list.data.find(
+        (row) =>
+          row.slug === problem.slug &&
+          (row.status === "in_progress" || row.status === "paused"),
+      );
+      if (!active) return false;
+
+      const state = await api("sessionGet", { params: { id: active.id } });
+      const session = state.data.session;
+      set({ session });
+
+      if (state.data.checklist_unlocked) {
+        set({
+          question: state.data.question,
+          feedback: null,
+          hint: null,
+          draft: EMPTY_DRAFT,
+          stage: "solution",
+        });
+        await get().loadChecklist();
+        return true;
+      }
+
+      if (state.data.question) {
+        set({
+          question: state.data.question,
+          questionStartedAt: Date.now(),
+          feedback: null,
+          hint: null,
+          draft: EMPTY_DRAFT,
+          stage: "questioning",
+        });
+        return true;
+      }
+
+      if (session.question_count > 0) {
+        const current = await api("microQuestionCurrent", { params: { id: session.id } });
+        set({
+          question: current.data,
+          questionStartedAt: Date.now(),
+          feedback: null,
+          hint: null,
+          draft: EMPTY_DRAFT,
+          stage: "questioning",
+        });
+        return true;
+      }
+
+      set({ stage: "concept" });
+      const loaded = await get().loadConcept();
+      if (!loaded) {
+        set({ stage: "approaches" });
+        await get().loadApproaches();
+        return false;
+      }
+      void get().loadApproaches();
+      return true;
+    } catch (cause) {
+      set({ error: toApiError(cause) });
+      return false;
+    } finally {
+      set({ pending: "none" });
+    }
+  },
+
   reset: () =>
     set({
       stage: "idle",
@@ -202,6 +286,7 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
       simplifiedText: null,
       simplifiedWhy: null,
       question: null,
+      questionStartedAt: 0,
       draft: EMPTY_DRAFT,
       feedback: null,
       hint: null,
@@ -243,10 +328,13 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
       const res = await api("sessionsCreate", {
         body: { slug: problem.slug, approach_id: approachId as never, problem },
       });
-      set({ session: res.data, stage: "concept" });
+      set({ session: res.data });
       applyUsageMeta(res.meta.creditsRemaining, res.meta.creditsResetAt);
       track("approach_selected", { slug: problem.slug, approach_id: approachId });
-      await get().loadConcept();
+      // Stay on the approach list until the card exists. Entering "concept"
+      // first left a blank stage when the concept call failed.
+      const loaded = await get().loadConcept();
+      set({ stage: loaded ? "concept" : "approaches" });
     } catch (cause) {
       set({ error: toApiError(cause) });
     } finally {
@@ -255,19 +343,21 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
   },
 
   switchApproach: async (approachId) => {
-    const { session, problem } = get();
+    const { session, problem, concept } = get();
     if (!session || !problem) return;
+    if (approachId === session.selected_approach && concept) return;
     set({ pending: "session", error: null });
     try {
-      // The quote comes back before anything commits, so the UI can confirm the
-      // cost first (§7.4).
-      const quote = await api("sessionPatch", {
+      const res = await api("sessionPatch", {
         body: { approach_id: approachId as never },
         params: { id: session.id },
       });
+      // The backend discards the old plan, attempts and hints. Mirror that
+      // locally before fetching the new card, so no stale question can render.
       set({
-        session: quote.data,
+        session: res.data,
         question: null,
+        questionStartedAt: 0,
         feedback: null,
         hint: null,
         checklist: null,
@@ -275,9 +365,15 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
         simplifiedLevel: 0,
         simplifiedText: null,
         simplifiedWhy: null,
-        stage: "concept",
+        stage: "approaches",
       });
-      await get().loadConcept();
+      const loaded = await get().loadConcept();
+      set({ stage: loaded ? "concept" : "approaches" });
+      track("approach_selected", {
+        slug: problem.slug,
+        approach_id: approachId,
+        switched: true,
+      });
     } catch (cause) {
       set({ error: toApiError(cause) });
     } finally {
@@ -287,7 +383,7 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
 
   loadConcept: async (simplify = false) => {
     const session = get().session;
-    if (!session) return;
+    if (!session) return false;
     set({ pending: simplify ? "simplify" : "concept", error: null });
     try {
       if (simplify) {
@@ -302,14 +398,16 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
             : null,
         });
         track("simplify_clicked", { session_id: session.id, level: body.simplified.level });
-        return;
+        return true;
       }
 
       const res = await api("concept", { params: { id: session.id } });
       set({ concept: (res.data as { card: ConceptCard }).card, simplifiedLevel: 0 });
       track("concept_viewed", { session_id: session.id });
+      return true;
     } catch (cause) {
       set({ error: toApiError(cause) });
+      return false;
     } finally {
       set({ pending: "none" });
     }
@@ -326,12 +424,14 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
       });
       set({
         question: res.data.question,
+        questionStartedAt: Date.now(),
         stage: "questioning",
         feedback: null,
         hint: null,
         draft: EMPTY_DRAFT,
       });
       applyUsageMeta(res.meta.creditsRemaining, res.meta.creditsResetAt);
+      void get().refreshUsage();
       track("mq_generated", {
         session_id: session.id,
         charged: res.data.credits_charged,
@@ -349,7 +449,8 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
     if (!session || !question) return;
     set({ pending: "answer", error: null, hint: null });
     try {
-      const startedAt = Date.now();
+      // Time on task starts when the question is shown, not when Submit is hit.
+      const startedAt = get().questionStartedAt || Date.now();
       const res = await api("microQuestionAnswer", {
         params: { id: session.id, k: String(question.index) },
         body: {
@@ -357,13 +458,20 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
           ...(draft.choiceIndexes.length > 0 ? { choice_indexes: draft.choiceIndexes } : {}),
           ...(draft.order.length > 0 ? { order: draft.order } : {}),
           hints_used: question.hints_used,
-          time_taken_seconds: Math.round((Date.now() - startedAt) / 1000),
+          time_taken_seconds: Math.max(0, Math.round((Date.now() - startedAt) / 1000)),
         },
       });
       const body = res.data;
+      const current = get().question;
+      // A wrong answer keeps the same question; record the server's attempt
+      // number locally so the "show me this step" threshold can ever be met.
+      const next = body.all_passed
+        ? null
+        : (body.next_question ?? (current ? { ...current, attempts: body.attempt_no } : null));
       set({
         feedback: body,
-        question: body.all_passed ? null : (body.next_question ?? get().question),
+        question: next,
+        questionStartedAt: body.next_question ? Date.now() : get().questionStartedAt,
         stage: body.all_passed ? "solution" : get().stage,
         draft: EMPTY_DRAFT,
       });
@@ -377,9 +485,6 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
         index: question.index,
         verdict: body.verdict,
       });
-      if (body.verdict !== "correct") {
-        track("hint_used", { session_id: session.id, index: question.index, level: 0 });
-      }
     } catch (cause) {
       set({ error: toApiError(cause) });
     } finally {
@@ -414,31 +519,22 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
     if (!session || !question) return;
     set({ pending: "hint", error: null });
     try {
-      // §10.8: the dead-end escape hatch. There is no separate "reveal" endpoint
-      // in the API (§20), so this goes through the answer route with
-      // `hints_used` pinned at the maximum — the server decides whether the
-      // attempt cap has been hit and returns the step explanation either way.
-      const res = await api("microQuestionAnswer", {
+      // §10.8: an explicit request releases this step. It is not an answer:
+      // no attempt is recorded and no credit is spent.
+      const res = await api("microQuestionReveal", {
         params: { id: session.id, k: String(question.index) },
-        body: { answer: get().draft.text, hints_used: 3, time_taken_seconds: 0 },
       });
-      const body = res.data;
-      set({
-        feedback: body,
-        question: {
-          ...(body.next_question ?? get().question!),
-          revealed: true,
-          step_explanation:
-            body.next_question?.step_explanation ??
-            get().question?.step_explanation ??
-            null,
-        },
-        stage: body.all_passed ? "solution" : get().stage,
-        draft: EMPTY_DRAFT,
-      });
-      if (body.all_passed) {
-        await get().loadChecklist();
-      }
+      set((state) =>
+        state.question
+          ? {
+              question: {
+                ...state.question,
+                revealed: res.data.revealed,
+                step_explanation: res.data.step_explanation,
+              },
+            }
+          : state,
+      );
       track("question_revealed", { session_id: session.id, index: question.index });
     } catch (cause) {
       set({ error: toApiError(cause) });
@@ -481,6 +577,7 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
         analysisLanguage: res.data.editor_language,
         stage: "analyzed",
       });
+      void get().refreshUsage();
       track("analysis_opened", { session_id: session.id });
     } catch (cause) {
       set({ error: toApiError(cause) });
@@ -499,6 +596,7 @@ export const useLearnerStore = create<LearnerState>((set, get) => ({
         body: { status: "completed" },
       });
       set({ session: res.data });
+      void get().refreshUsage();
       track("session_completed", { session_id: session.id, approach_id: session.selected_approach });
     } catch (cause) {
       set({ error: toApiError(cause) });

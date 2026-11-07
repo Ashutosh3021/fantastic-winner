@@ -1,4 +1,7 @@
+import { useState } from "react";
+
 import { Badge } from "../components/badge";
+import { Button } from "../components/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/card";
 import { Notice } from "../components/field";
 import { AppIcon, ArrowRight01Icon, StarIcon } from "../icons";
@@ -51,6 +54,26 @@ export function ApproachListCard({
 
   const affordable = creditsLeft >= costPerQuestion;
   const current = selectedApproach ?? null;
+  const [pendingSwitch, setPendingSwitch] = useState<Approach | null>(null);
+
+  function select(approach: Approach) {
+    if (approach.id === current || busy) return;
+    // Starting a problem is the normal first choice. Replacing an existing
+    // plan spends credits and destroys progress, so it needs an explicit
+    // confirmation with both numbers on screen.
+    if (current) {
+      setPendingSwitch(approach);
+      return;
+    }
+    onChoose(approach.id);
+  }
+
+  function confirmSwitch() {
+    if (!pendingSwitch || busy) return;
+    const approach = pendingSwitch;
+    setPendingSwitch(null);
+    onChoose(approach.id);
+  }
 
   return (
     <Card>
@@ -70,7 +93,7 @@ export function ApproachListCard({
                   type="button"
                   disabled={busy}
                   aria-current={isCurrent ? "true" : undefined}
-                  onClick={() => onChoose(approach.id)}
+                  onClick={() => select(approach)}
                   className={cn(
                     "group flex w-full items-start gap-2.5 rounded-lg border p-3 text-left",
                     "transition-[border-color,background-color] duration-[var(--duration-micro)] ease-out",
@@ -122,6 +145,65 @@ export function ApproachListCard({
             );
           })}
         </ul>
+
+        {pendingSwitch && (
+          <div
+            role="alertdialog"
+            aria-labelledby="switch-confirm-title"
+            aria-describedby="switch-confirm-body"
+            className="mt-3 rounded-lg border border-warning/40 bg-warning-subtle p-3"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setPendingSwitch(null);
+            }}
+          >
+            <h3 id="switch-confirm-title" className="text-sm font-medium">
+              {t.switchConfirmTitle(pendingSwitch.name)}
+            </h3>
+            <p
+              id="switch-confirm-body"
+              className="mt-1 text-[11px] leading-relaxed text-muted-foreground"
+            >
+              {t.switchConfirmBody(costPerQuestion, creditsLeft)}
+            </p>
+
+            {affordable ? (
+              <div className="mt-2.5 flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={busy}
+                  onClick={confirmSwitch}
+                >
+                  {t.switchConfirmAction}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  autoFocus
+                  disabled={busy}
+                  onClick={() => setPendingSwitch(null)}
+                >
+                  {t.cancel}
+                </Button>
+              </div>
+            ) : (
+              <div className="mt-2.5 flex flex-col gap-2">
+                <Notice tone="warning">
+                  You need at least {costPerQuestion} question credits to switch.{" "}
+                  {t.creditsExhaustedBody}
+                </Notice>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  autoFocus
+                  onClick={() => setPendingSwitch(null)}
+                >
+                  {t.cancel}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
 
         {current ? (
           <p className="text-[11px] leading-relaxed text-muted-foreground">

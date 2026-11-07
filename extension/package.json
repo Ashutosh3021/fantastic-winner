@@ -11,6 +11,7 @@
     "zip": "wxt zip",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "node tests/e2e/run-e2e.mjs",
     "compile": "tsc --noEmit",
     "check": "npm run compile && npm run test && npm run build",
     "postinstall": "wxt prepare"
@@ -45,6 +46,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/vite": "^4.1.18",
     "@types/chrome": "^0.1.28",
     "@types/d3-force": "^3.0.10",

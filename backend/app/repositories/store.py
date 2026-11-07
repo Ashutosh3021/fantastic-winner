@@ -227,6 +227,14 @@ class SessionRepository(BaseRepository):
 class SessionContentRepository(BaseRepository):
     table = "session_content"
 
+    async def delete_for_session(self, session_id: str) -> None:
+        await self.gw.execute(
+            [
+                f"DELETE FROM {safe_identifier(self.table)} "
+                f"WHERE session_id = {encode(session_id)}"
+            ]
+        )
+
     async def current(self, session_id: str) -> dict[str, Any] | None:
         rows = await self.where(column="session_id", value=session_id, limit=50)
         if not rows:
@@ -263,6 +271,14 @@ class SessionContentRepository(BaseRepository):
 class AttemptRepository(BaseRepository):
     table = "micro_question_attempts"
 
+    async def delete_for_session(self, session_id: str) -> None:
+        await self.gw.execute(
+            [
+                f"DELETE FROM {safe_identifier(self.table)} "
+                f"WHERE session_id = {encode(session_id)}"
+            ]
+        )
+
     async def for_session(self, session_id: str) -> list[dict[str, Any]]:
         rows = await self.where(column="session_id", value=session_id, limit=200)
         return sorted(rows, key=lambda row: (int(row.get("question_index", 0)),
@@ -271,6 +287,44 @@ class AttemptRepository(BaseRepository):
     async def attempt_count(self, session_id: str, question_index: int) -> int:
         rows = await self.for_session(session_id)
         return sum(1 for row in rows if int(row.get("question_index", 0)) == question_index)
+
+class HintStateRepository(BaseRepository):
+    table = "question_hint_state"
+
+    async def get(self, session_id: str, question_index: int) -> int:
+        rows = await self.where(column="session_id", value=session_id, limit=50)
+        for row in rows:
+            if int(row.get("question_index", 0)) == question_index:
+                return min(3, int(row.get("hints_used", 0) or 0))
+        return 0
+
+    async def advance(self, session_id: str, question_index: int, *, floor: int = 0) -> int:
+        """Record one consumed hint and return the new count (clamped at 3).
+
+        ``floor`` lets an older attempt row's ``hints_used`` seed the state, so a
+        learner who used hints before this table existed does not start over.
+        """
+        current = max(await self.get(session_id, question_index), floor)
+        nxt = min(3, current + 1)
+        await self.gw.execute(
+            [
+                f"INSERT INTO {safe_identifier(self.table)} "
+                "(session_id, question_index, hints_used, updated_at) VALUES "
+                f"({encode(session_id)}, {encode(question_index)}, {encode(nxt)}, "
+                f"{encode(now_iso())}) "
+                "ON CONFLICT(session_id, question_index) DO UPDATE SET "
+                f"hints_used = {encode(nxt)}, updated_at = {encode(now_iso())}"
+            ]
+        )
+        return nxt
+
+    async def delete_for_session(self, session_id: str) -> None:
+        await self.gw.execute(
+            [
+                f"DELETE FROM {safe_identifier(self.table)} "
+                f"WHERE session_id = {encode(session_id)}"
+            ]
+        )
 
 class MistakeRepository(BaseRepository):
     table = "mistakes"

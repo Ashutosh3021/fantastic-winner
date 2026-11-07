@@ -31,6 +31,7 @@ from ..repositories.store import (
     AuthTokenRepository,
     ContentCacheRepository,
     EventRepository,
+    HintStateRepository,
     IpBudgetRepository,
     LoginCodeRepository,
     MistakeRepository,
@@ -84,6 +85,7 @@ class Container:
     sessions: SessionRepository
     session_content: SessionContentRepository
     attempts: AttemptRepository
+    hints: HintStateRepository
     mistakes: MistakeRepository
     saved_cards: SavedCardRepository
     events: EventRepository
@@ -161,6 +163,7 @@ def build_container(settings: Settings | None = None) -> Container:
     sessions = SessionRepository(gateway)
     session_content = SessionContentRepository(gateway)
     attempts = AttemptRepository(gateway)
+    hints = HintStateRepository(gateway)
     mistakes = MistakeRepository(gateway)
     saved_cards = SavedCardRepository(gateway)
     events = EventRepository(gateway)
@@ -195,6 +198,7 @@ def build_container(settings: Settings | None = None) -> Container:
         sessions=sessions,
         session_content=session_content,
         attempts=attempts,
+        hints=hints,
         mistakes=mistakes,
         saved_cards=saved_cards,
         events=events,
@@ -212,6 +216,7 @@ def build_container(settings: Settings | None = None) -> Container:
             sessions=sessions,
             content=session_content,
             attempts=attempts,
+            hints=hints,
             microq=microq,
         ),
         progress=ProgressService(

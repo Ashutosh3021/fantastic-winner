@@ -18,6 +18,7 @@ import {
   preferencesPatchSchema,
   preferencesSchema,
   progressSchema,
+  revealResponseSchema,
   reviewItemSchema,
   savedCardSchema,
   sessionStateSchema,
@@ -38,6 +39,13 @@ import {
 export const ROUTES = {
   me: { method: "GET", path: "/me", response: meSchema, class: "light" },
   meDelete: { method: "DELETE", path: "/me", response: z.null(), class: "auth" },
+  logout: {
+    method: "POST",
+    path: "/auth/logout",
+    body: z.object({ refresh_token: z.string().min(1) }),
+    response: z.object({ ok: z.boolean() }),
+    class: "auth",
+  },
 
   preferences: {
     method: "PUT",
@@ -53,7 +61,6 @@ export const ROUTES = {
     body: approachesRequestSchema,
     response: approachesResponseSchema,
     class: "light",
-    cacheable: true,
   },
 
   sessionsCreate: {
@@ -88,14 +95,12 @@ export const ROUTES = {
     path: "/sessions/{id}/concept",
     response: z.object({ session_id: z.string(), card: conceptCardSchema }),
     class: "heavy",
-    cacheable: true,
   },
   conceptSimplify: {
     method: "POST",
     path: "/sessions/{id}/concept/simplify",
     response: z.object({ session_id: z.string(), simplified: simplifiedConceptSchema }),
     class: "heavy",
-    cacheable: true,
   },
 
   microQuestions: {
@@ -104,9 +109,6 @@ export const ROUTES = {
     response: generateQuestionsResponseSchema,
     class: "heavy",
     idempotent: true,
-    // Deliberately NOT locally cacheable: question credits are charged even when
-    // the server serves a cached plan (§15.8). Skipping the request would let a
-    // learner generate for free by reloading the page.
   },
   microQuestionCurrent: {
     method: "GET",
@@ -118,6 +120,12 @@ export const ROUTES = {
     method: "POST",
     path: "/sessions/{id}/micro-questions/{k}/hint",
     response: hintResponseSchema,
+    class: "light",
+  },
+  microQuestionReveal: {
+    method: "POST",
+    path: "/sessions/{id}/micro-questions/{k}/reveal",
+    response: revealResponseSchema,
     class: "light",
   },
   microQuestionAnswer: {
@@ -142,7 +150,6 @@ export const ROUTES = {
     response: analysisResponseSchema,
     class: "analysis",
     idempotent: true,
-    cacheable: true,
   },
 
   usage: { method: "GET", path: "/usage", response: usageSchema, class: "light" },

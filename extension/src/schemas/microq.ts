@@ -37,6 +37,14 @@ export const hintResponseSchema = z.object({
 });
 export type HintResponse = z.infer<typeof hintResponseSchema>;
 
+export const revealResponseSchema = z.object({
+  session_id: z.string(),
+  index: z.number().int().min(1),
+  step_explanation: z.string(),
+  revealed: z.boolean().default(true),
+});
+export type RevealResponse = z.infer<typeof revealResponseSchema>;
+
 export const answerResponseSchema = z.object({
   verdict: verdictSchema,
   feedback: z.string(),

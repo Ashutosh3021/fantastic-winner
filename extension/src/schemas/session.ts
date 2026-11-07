@@ -110,6 +110,8 @@ export const meSchema = z.object({
     window_start: isoDate,
     window_end: isoDate,
     active_sessions: z.number().int().min(0),
+    max_active_sessions: z.number().int().min(1).optional(),
+    min_plan_credits: z.number().int().min(1).optional(),
   }),
 });
 export type Me = z.infer<typeof meSchema>;

@@ -68,10 +68,6 @@ export const auth = {
   state: (): Promise<Res<AuthState>> => send({ t: "auth.state" }),
 };
 
-export function setPrefs(prefs: Record<string, unknown>): Promise<Res<null>> {
-  return send({ t: "prefs.set", prefs: prefs as never });
-}
-
 export function log(level: "info" | "warn" | "error", msg: string): void {
   void chrome.runtime.sendMessage({ t: "log", level, msg });
 }

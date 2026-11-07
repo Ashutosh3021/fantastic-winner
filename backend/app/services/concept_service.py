@@ -123,6 +123,10 @@ class ConceptService:
             card.humour_line = None
 
         card.diagram = self._diagram_or_none(card.diagram, problem=problem)
+        # The ceiling is a property of the product, not of what the model chose
+        # to emit. Leaving this at the schema default of 0 hid the simplify
+        # affordance on every card.
+        card.simplified_levels_available = MAX_SIMPLIFICATION_LEVELS
         return card
 
     def _diagram_or_none(

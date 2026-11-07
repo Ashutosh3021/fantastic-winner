@@ -118,9 +118,16 @@ async function onRouteChange(ctx: ContentScriptContext): Promise<void> {
     quality: result.problem.extraction_quality,
   });
 
-  await refreshUsage();
+  try {
+    await refreshUsage();
+  } catch {
+    // Credits are a convenience here. An expired token or network blip must
+    // not strand the extraction spinner or hide the approach list.
+  }
   useLearnerStore.setState({ pending: "none" });
-  void store.loadApproaches();
+
+  const resumed = await store.resumeSession();
+  if (!resumed) await store.loadApproaches();
 }
 
 /**

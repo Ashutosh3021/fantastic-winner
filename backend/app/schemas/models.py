@@ -442,6 +442,12 @@ class HintResponse(Base):
     text: str
     is_last: bool
 
+class RevealResponse(Base):
+    session_id: str
+    index: int = Field(ge=1)
+    step_explanation: str
+    revealed: bool = True
+
 class AnswerSubmission(Base):
     answer: str = Field(default="", max_length=4_000)
     choice_indexes: list[int] | None = Field(default=None, max_length=12)

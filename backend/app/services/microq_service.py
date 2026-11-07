@@ -377,7 +377,10 @@ class MicroQuestionService:
         hints and the step explanation to be *available*, but the hidden parts
         have nowhere to land in the response model.
         """
-        available = bool(detail and detail.hints and not detail.degraded)
+        # A projection without detail is normal on reload: the hint endpoint
+        # generates the detail lazily. Only a degraded detail means hints
+        # genuinely cannot be produced.
+        available = not detail.degraded if detail is not None else True
         step = None
         if revealed and detail:
             step = detail.step_explanation or None

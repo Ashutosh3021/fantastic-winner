@@ -22,8 +22,6 @@ export const CONFIG = {
   requestTimeoutMs: 45_000,
   /** §16.2: at most 2 attempts, ever. The second reuses the idempotency key. */
   maxAttempts: 2,
-  /** §15.8: local response cache lifetime. */
-  localCacheTtlMs: 30 * 24 * 60 * 60 * 1_000,
   /** §12.7: auto-advance interval for diagram frames. */
   frameAdvanceMs: 1_500,
 } as const;

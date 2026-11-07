@@ -99,18 +99,32 @@ export function Popup() {
     const state = await auth.state();
     setAuthState(state.ok ? state.data : SIGNED_OUT);
     if (!state.ok || !state.data.signedIn) return;
-    try {
-      const [usageRes, progressRes, meRes] = await Promise.all([
-        api("usage", {}),
-        api("progress", {}),
-        api("me", {}),
-      ]);
-      setUsage(usageRes.data);
-      setProgress(progressRes.data);
-      await prefsStore.setValue(meRes.data.preferences);
-      setPrefs(meRes.data.preferences);
-    } catch {
-      // Signed in but offline: the popup still shows preferences.
+
+    // One failed panel must not blank the other two. The old Promise.all threw
+    // away a successful usage read because progress happened to fail.
+    const [usageRes, progressRes, meRes] = await Promise.allSettled([
+      api("usage", {}),
+      api("progress", {}),
+      api("me", {}),
+    ]);
+    if (usageRes.status === "fulfilled") setUsage(usageRes.value.data);
+    if (progressRes.status === "fulfilled") setProgress(progressRes.value.data);
+    if (meRes.status === "fulfilled") {
+      await prefsStore.setValue(meRes.value.data.preferences);
+      setPrefs(meRes.value.data.preferences);
+      setAuthState({
+        signedIn: true,
+        email: meRes.value.data.email || null,
+        emailVerified: meRes.value.data.email_verified,
+      });
+      if (usageRes.status === "rejected") {
+        const snapshot = meRes.value.data.usage;
+        setUsage({
+          ...snapshot,
+          max_active_sessions: snapshot.max_active_sessions ?? 3,
+          min_plan_credits: snapshot.min_plan_credits ?? 3,
+        });
+      }
     }
   }, []);
 

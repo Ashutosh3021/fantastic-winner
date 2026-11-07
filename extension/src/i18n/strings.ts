@@ -16,6 +16,10 @@ type Strings = {
   chooseApproach: string;
   creditCost: (cost: number, left: number) => string;
   switchResets: string;
+  switchConfirmTitle: (name: string) => string;
+  switchConfirmBody: (cost: number, left: number) => string;
+  switchConfirmAction: string;
+  cancel: string;
   conceptStillDontGet: string;
   startMicroQuestions: string;
   microQuestionOf: (index: number, total: number) => string;
@@ -50,6 +54,11 @@ const en: Strings = {
   chooseApproach: "Choose how you want to learn this problem.",
   creditCost: (cost, left) => `The questions use ${cost} of your ${left} question credits.`,
   switchResets: "Switching resets your progress on this problem.",
+  switchConfirmTitle: (name) => `Switch to ${name}?`,
+  switchConfirmBody: (cost, left) =>
+    `The new plan costs ${cost} question credits and uses ${cost} of your ${left} remaining. Your current questions, hints, and checklist for this problem will be replaced.`,
+  switchConfirmAction: "Switch and reset progress",
+  cancel: "Cancel",
   conceptStillDontGet: "I still don't get it",
   startMicroQuestions: "Start micro-questions",
   microQuestionOf: (index, total) => `Micro-question ${index} / ${total}`,
@@ -87,6 +96,11 @@ const hi: Strings = {
   chooseApproach: "Choose how you want to learn this problem.",
   creditCost: (cost, left) => `Sawal aapke ${left} question credits mein se ${cost} use karega.`,
   switchResets: "Switching resets your progress on this problem.",
+  switchConfirmTitle: (name) => `${name} par switch karein?`,
+  switchConfirmBody: (cost, left) =>
+    `Naya plan ${cost} question credits lega aur aapke ${left} bache credits mein se ${cost} use karega. Is problem ke purane questions, hints aur checklist replace ho jayenge.`,
+  switchConfirmAction: "Switch karein, progress reset karein",
+  cancel: "Cancel",
   conceptStillDontGet: "I still don't get it",
   startMicroQuestions: "Start micro-questions",
   microQuestionOf: (index, total) => `Micro-question ${index} / ${total}`,

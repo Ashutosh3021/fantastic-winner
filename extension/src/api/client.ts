@@ -14,8 +14,6 @@ import type { ErrorCode, ResponseMeta } from "../schemas";
 import { ApiFailure, fallbackMessage, isRetryable, parseErrorCode, statusToCode } from "./errors";
 import { ROUTES, type BodyOf, type ResponseOf, type RouteId } from "./routes";
 import { clearTokens, getTokens, isExpired, setTokens, type AuthTokens } from "./auth";
-import { prefsVersionStore } from "../state/prefs";
-import { readLocal, writeLocal } from "./cache";
 
 export type Envelope<T> = {
   data: T;
@@ -33,7 +31,7 @@ export type CallOptions<R extends RouteId> = {
    * `idempotent`. Mint one per click, not per attempt.
    */
   idempotencyKey?: string;
-  /** Bypass the local cache read. Writes still happen. */
+  /** Retained for message compatibility; responses are no longer cached locally. */
   noCache?: boolean;
   /** Per-route override; defaults to `CONFIG.requestTimeoutMs`. */
   timeoutMs?: number;
@@ -48,7 +46,6 @@ type RequestShape = {
   body?: z.ZodTypeAny;
   response: z.ZodTypeAny;
   idempotent?: boolean;
-  cacheable?: boolean;
 };
 
 function routeOf(id: RouteId): RequestShape {
@@ -67,23 +64,19 @@ function fillPath(template: string, params?: Record<string, string>): string {
 }
 
 /**
- * Local lookup pointer for the cache. Built only from values the client already
- * knows (route, path params, body, current `prefs_version`) — never from
- * anything the server uses to build a cache key.
- *
- * `prefs_version` is here so a learner who switches language or level does not
- * keep being served the previous language out of the local cache (§5.6). It
- * changes exactly when the server says our cached preferences are stale.
+ * Dedupe key for identical in-flight requests. The idempotency key is part of
+ * it so two separate user actions that happen to have the same body (two clicks
+ * of "Start") are not collapsed into one request.
  */
-async function pointerFor(
+function pointerFor(
   route: RouteId,
   params?: Record<string, string>,
   body?: unknown,
-): Promise<string> {
+  idempotencyKey?: string,
+): string {
   const paramsKey = params ? JSON.stringify(Object.entries(params).sort()) : "";
   const bodyKey = body === undefined ? "" : JSON.stringify(body);
-  const prefsKey = await prefsVersionStore.getValue();
-  return `${route}|${prefsKey}|${paramsKey}|${bodyKey}`;
+  return `${route}|${idempotencyKey ?? ""}|${paramsKey}|${bodyKey}`;
 }
 
 const inFlight = new Map<string, Promise<Envelope<unknown>>>();
@@ -120,8 +113,9 @@ async function refreshAccessToken(): Promise<AuthTokens | null> {
       await setTokens(next);
       return next;
     } catch {
-      // A network blip is not a reason to destroy a valid refresh token.
-      return current;
+      // Do not retry the same request with the expired access token. Returning
+      // null makes the caller surface re-authentication instead of a 401 loop.
+      return null;
     } finally {
       refreshInFlight = null;
     }
@@ -266,37 +260,37 @@ export async function call<R extends RouteId>(
   options: CallOptions<R> = {},
 ): Promise<Envelope<ResponseOf<R>>> {
   const def = routeOf(route);
-  const pointer = await pointerFor(route, options.params, options.body);
+  const pointer = pointerFor(
+    route,
+    options.params,
+    options.body,
+    options.idempotencyKey,
+  );
 
   const existing = inFlight.get(pointer);
   if (existing) return existing as Promise<Envelope<ResponseOf<R>>>;
 
-  const run = (async (): Promise<Envelope<ResponseOf<R>>> => {
-    if (def.cacheable && !options.noCache) {
-      const hit = await readLocal<ResponseOf<R>>(pointer);
-      if (hit) {
-        return { data: hit.payload, meta: hit.meta, fromLocalCache: true };
-      }
-    }
+  // Reads and explicitly idempotent writes are safe to retry. A plain POST can
+  // have committed server-side before the timeout, so retrying it would submit
+  // the same answer or consume the same hint twice.
+  const retrySafe = def.method === "GET" || def.idempotent === true;
 
+  const run = (async (): Promise<Envelope<ResponseOf<R>>> => {
     for (let attempt = 0; attempt < CONFIG.maxAttempts; attempt += 1) {
       try {
-        const result = await sendOnce(route, options, attempt);
-        if (def.cacheable && result.meta.cache_key) {
-          await writeLocal(pointer, {
-            cacheKey: result.meta.cache_key,
-            contentVersion: result.meta.content_version ?? null,
-            payload: result.data,
-            meta: result.meta,
-          });
-        }
-        return result;
+        return await sendOnce(route, options, attempt);
       } catch (cause) {
         const failure =
           cause instanceof ApiFailure
             ? cause
             : new ApiFailure("unknown", fallbackMessage("unknown"));
-        if (!isRetryable(failure.code) || attempt === CONFIG.maxAttempts - 1) throw failure;
+        if (
+          !retrySafe ||
+          !isRetryable(failure.code) ||
+          attempt === CONFIG.maxAttempts - 1
+        ) {
+          throw failure;
+        }
 
         // Same idempotency key on the retry — that is what makes it safe (§5.7).
         const waitMs = failure.retryAfterSec

@@ -12,10 +12,11 @@ import { AppIcon, ChevronDownIcon, ClipboardListIcon, CodeIcon } from "../icons"
 import { cn } from "../../lib/utils";
 import type { ChecklistResponse, Language } from "../../schemas";
 import { strings } from "../../i18n/strings";
-import { overlayStateStore, patchOverlayState } from "../../state/prefs";
+import { overlayStateStore, setChecklistRevealed } from "../../state/prefs";
 
 type Props = {
   checklist: ChecklistResponse | null;
+  slug: string;
   language: Language;
   loading: boolean;
   onOpenAnalysis: () => void;
@@ -35,6 +36,7 @@ type Props = {
  */
 export function ChecklistCard({
   checklist,
+  slug,
   language,
   loading,
   onOpenAnalysis,
@@ -45,12 +47,19 @@ export function ChecklistCard({
   const [open, setOpenState] = useState(false);
 
   useEffect(() => {
-    void overlayStateStore.getValue().then((state) => setOpenState(state.checklistRevealed));
-  }, []);
+    void overlayStateStore.getValue().then((state) => {
+      // Reveal state belongs to the problem it was earned on. Without the slug
+      // check, opening one checklist pre-opened every later problem's plan.
+      const saved =
+        state.checklistRevealedBySlug?.[slug] ??
+        (state.lastSlug === slug && state.checklistRevealed);
+      setOpenState(saved);
+    });
+  }, [slug]);
 
   function setOpen(next: boolean) {
     setOpenState(next);
-    void patchOverlayState({ checklistRevealed: next });
+    void setChecklistRevealed(slug, next);
   }
 
   return (

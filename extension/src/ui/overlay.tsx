@@ -41,7 +41,7 @@ import { MicroQuestionCard } from "./cards/micro-question-card";
 import { AnalysisWindow, PasteCodePanel } from "./cards/analysis-window";
 import { ErrorCard } from "./cards/error-card";
 
-const MIN_PLAN_CREDITS = 3;
+const FALLBACK_MIN_PLAN_CREDITS = 3;
 
 const STAGE_LABEL: Record<string, string> = {
   idle: "Choosing an approach",
@@ -131,13 +131,18 @@ export function Overlay() {
     return () => media.removeEventListener("change", resolve);
   }, []);
 
+  // The server owns both the plan cost and the session cap; a hard-coded 3
+  // drifted from the config as soon as either changed.
+  const minPlanCredits =
+    store.usage?.min_plan_credits ?? FALLBACK_MIN_PLAN_CREDITS;
+
   const creditsLeft = useMemo(() => {
-    if (!store.usage) return MIN_PLAN_CREDITS;
+    if (!store.usage) return minPlanCredits;
     return Math.max(
       0,
       store.usage.question_credits_limit - store.usage.question_credits_used,
     );
-  }, [store.usage]);
+  }, [store.usage, minPlanCredits]);
 
   const run = useCallback(async (work: () => Promise<void>) => {
     try {
@@ -258,7 +263,7 @@ export function Overlay() {
                         approaches={store.approaches}
                         recommendedFirst={store.recommendedFirst}
                         language={language}
-                        costPerQuestion={MIN_PLAN_CREDITS}
+                        costPerQuestion={minPlanCredits}
                         creditsLeft={creditsLeft}
                         busy={busy}
                         onChoose={(id) => void run(() => store.chooseApproach(id))}
@@ -273,7 +278,7 @@ export function Overlay() {
                         recommendedFirst={store.recommendedFirst}
                         language={language}
                         selectedApproach={store.session?.selected_approach ?? null}
-                        costPerQuestion={MIN_PLAN_CREDITS}
+                        costPerQuestion={minPlanCredits}
                         creditsLeft={creditsLeft}
                         busy={busy}
                         onChoose={(id) => void run(() => store.switchApproach(id))}
@@ -284,9 +289,13 @@ export function Overlay() {
                         simplifiedLevel={store.simplifiedLevel}
                         simplifiedText={store.simplifiedText}
                         simplifiedWhy={store.simplifiedWhy}
-                        canAfford={creditsLeft >= MIN_PLAN_CREDITS}
+                        canAfford={creditsLeft >= minPlanCredits}
                         busy={busy}
-                        onSimplify={() => void run(() => store.loadConcept(true))}
+                        onSimplify={() =>
+                          void run(async () => {
+                            await store.loadConcept(true);
+                          })
+                        }
                         onStart={() => void run(() => store.startQuestions())}
                       />
                     </>
@@ -313,6 +322,7 @@ export function Overlay() {
                   {store.stage === "solution" && (
                     <ChecklistCard
                       checklist={store.checklist}
+                      slug={store.problem?.slug ?? ""}
                       language={language}
                       loading={store.pending === "checklist"}
                       pending={busy}
@@ -432,8 +442,7 @@ function ManualPaste({ language }: { language: Language }) {
 
 /** Re-read credits after any card mutates them. */
 export async function refreshUsage(): Promise<void> {
-  const res = await api("usage", {});
-  useLearnerStore.getState().setUsage(res.data);
+  await useLearnerStore.getState().refreshUsage();
   void flush();
 }
 
@@ -457,8 +466,8 @@ export async function syncMe(): Promise<void> {
 
   if (drifted) {
     store.setNotice("Your settings changed. CodeMentor refreshed to match.");
-    // Cached content was rendered in the old language; drop the local copies so
-    // the next call is a real one.
-    void store.loadApproaches();
+    // Content was rendered in the old language; re-fetch what is on screen.
+    if (store.stage === "concept") void store.loadConcept();
+    else void store.loadApproaches();
   }
 }

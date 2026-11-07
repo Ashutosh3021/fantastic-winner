@@ -20,7 +20,21 @@ npm run build                 # -> .output/chrome-mv3/
 npm run zip                   # -> .output/*.zip, ready for the Web Store
 npm run compile               # tsc --noEmit
 npm test                      # vitest
+npm run test:e2e              # build for the fake API, then Playwright
 npm run check                 # compile + test + build
+```
+
+`npm run test:e2e` builds the extension with `VITE_API_BASE_URL=http://127.0.0.1:8787`,
+starts a stateful fake backend, loads the unpacked extension in Chromium, and
+drives sign-in, extraction, approach switching, resume, hints, reveal,
+checklist unlock, and analysis. It does not need Pyronites or AI credentials.
+
+If the pinned Playwright browser is not in the local cache, point the harness at
+an installed Chromium:
+
+```powershell
+$env:PLAYWRIGHT_CHROMIUM_EXECUTABLE="C:\path\to\chrome.exe"
+npm run test:e2e
 ```
 
 Load it via `chrome://extensions` → *Developer mode* → *Load unpacked* →
@@ -28,7 +42,29 @@ Load it via `chrome://extensions` → *Developer mode* → *Load unpacked* →
 
 `VITE_API_BASE_URL` is read at build time **and** in `wxt.config.ts` (it appears
 in `host_permissions`), so a staged build points at a different backend without a
-code change.
+code change. A production build refuses to start while the value is still the
+placeholder; run `npm run dev` if you only need the UI without a backend.
+
+Both halves need their own environment file. This checkout ships the examples,
+not filled-in secrets:
+
+```bash
+cp extension/.env.example extension/.env   # VITE_API_BASE_URL
+cp backend/.env.example backend/.env       # PYRONITES_KEY + one AI provider key
+```
+
+### Sign-in from an unpacked build
+
+The backend allowlist compares **exact** extension origins. An unpacked build
+gets a different runtime ID from the shipped one (`pmkgnbafanjpmmhphckgglhnpajpepal`),
+so sign-in fails with "That sign-in link is not valid" until the dev ID is
+allowed:
+
+1. Load the unpacked build via `chrome://extensions`.
+2. Copy its ID from the extension card.
+3. Set `EXTENSION_RETURN_ORIGINS=chrome-extension://<dev-id>` in
+   `backend/.env` and restart the backend. Use a comma-separated list to allow
+   both the dev and shipped IDs.
 
 ---
 
