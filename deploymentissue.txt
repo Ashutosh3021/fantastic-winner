@@ -1,0 +1,50 @@
+2026-11-07T10:51:19.945599744Z #11 9.516 Downloading certifi-2026.10.23-py3-none-any.whl (135 kB)
+2026-11-07T10:51:19.94560115Z #11 9.524 Downloading pycparser-3.12-py3-none-any.whl (62 kB)
+2026-11-07T10:51:19.945602429Z #11 9.580 Building wheels for collected packages: codementor-backend
+2026-11-07T10:51:20.102809053Z #11 9.581   Building wheel for codementor-backend (pyproject.toml): started
+2026-11-07T10:51:20.102829133Z #11 9.673   Building wheel for codementor-backend (pyproject.toml): finished with status 'done'
+2026-11-07T10:51:20.102833916Z #11 9.674   Created wheel for codementor-backend: filename=codementor_backend-0.1.0-py3-none-any.whl size=154286 sha256=a168451e0efab10192ebf694590027ec420ed08914abd97f435a2f5f85d35a3b
+2026-11-07T10:51:20.102836247Z #11 9.674   Stored in directory: /tmp/pip-ephem-wheel-cache-sesvikod/wheels/de/58/76/633f094fc07d1863c26645e86c4bc9a1104f2a5bea1d5c5943
+2026-11-07T10:51:20.102837878Z #11 9.675 Successfully built codementor-backend
+2026-11-07T10:51:20.102840384Z #11 9.738 Installing collected packages: typing-extensions, pyyaml, python-multipart, pycparser, idna, h11, dnspython, click, certifi, annotated-types, annotated-doc, uvicorn, typing-inspection, pydantic-core, httpcore, email-validator, cffi, anyio, starlette, pydantic, httpx, cryptography, fastapi, codementor-backend
+2026-11-07T10:51:21.444692226Z #11 11.08 
+2026-11-07T10:51:21.596378329Z #11 11.08 Successfully installed annotated-doc-0.0.5 annotated-types-0.8.0 anyio-4.16.0 certifi-2026.10.23 cffi-2.1.1 click-8.5.1 codementor-backend-0.1.0 cryptography-46.0.3 dnspython-2.9.2 email-validator-2.3.0 fastapi-0.139.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 idna-3.20 pycparser-3.12 pydantic-2.13.4 pydantic-core-2.46.4 python-multipart-0.0.20 pyyaml-6.0.2 starlette-1.3.1 typing-extensions-4.16.0 typing-inspection-0.4.5 uvicorn-0.51.0
+2026-11-07T10:51:21.624593461Z #11 DONE 11.3s
+2026-11-07T10:51:21.82932441Z 
+2026-11-07T10:51:21.829341086Z #12 [runtime 2/6] RUN groupadd --system codementor     && useradd --system --gid codementor --home /app codementor
+2026-11-07T10:51:21.829342972Z #12 CACHED
+2026-11-07T10:51:21.829344208Z 
+2026-11-07T10:51:21.829345933Z #13 [runtime 3/6] WORKDIR /app
+2026-11-07T10:51:21.98234995Z #13 CACHED
+2026-11-07T10:51:21.982364881Z 
+2026-11-07T10:51:21.982367328Z #14 [runtime 4/6] COPY --from=builder /opt/venv /opt/venv
+2026-11-07T10:51:22.232060099Z #14 DONE 0.4s
+2026-11-07T10:51:22.423753439Z 
+2026-11-07T10:51:22.423775074Z #15 [runtime 5/6] COPY --chown=codementor:codementor app ./app
+2026-11-07T10:51:22.423778116Z #15 DONE 0.0s
+2026-11-07T10:51:22.423779353Z 
+2026-11-07T10:51:22.423781362Z #16 [runtime 6/6] COPY --chown=codementor:codementor scripts ./scripts
+2026-11-07T10:51:22.423789891Z #16 DONE 0.0s
+2026-11-07T10:51:22.423791191Z 
+2026-11-07T10:51:22.423793Z #17 exporting to image
+2026-11-07T10:51:22.423794373Z #17 exporting layers
+2026-11-07T10:51:22.667834482Z #17 exporting layers 0.4s done
+2026-11-07T10:51:22.822188013Z #17 pushing layers
+2026-11-07T10:51:23.745125647Z #17 pushing layers 1.1s done
+2026-11-07T10:51:23.910098Z #17 DONE 1.6s
+2026-11-07T10:51:23.91011198Z 
+2026-11-07T10:51:23.910114714Z #18 exporting cache to registry
+2026-11-07T10:51:23.910116557Z #18 preparing build cache for export
+2026-11-07T10:51:24.855144501Z #18 sending cache export
+2026-11-07T10:51:26.670960307Z #18 sending cache export 1.8s done
+2026-11-07T10:51:26.670975296Z #18 DONE 4.0s
+2026-11-07T10:51:28.473427684Z ==> Deploying...
+2026-11-07T10:51:28.567807372Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-11-07T10:51:39.364691475Z {"ts": "2026-11-07T10:51:39+0000", "level": "info", "logger": "uvicorn.error", "msg": "Started server process [7]", "request_id": "-"}
+2026-11-07T10:51:39.364736788Z {"ts": "2026-11-07T10:51:39+0000", "level": "info", "logger": "uvicorn.error", "msg": "Waiting for application startup.", "request_id": "-"}
+2026-11-07T10:51:39.862630419Z {"ts": "2026-11-07T10:51:39+0000", "level": "info", "logger": "httpx", "msg": "HTTP Request: POST https://pyrocore-backend.onrender.com/api/projects/leet-guide3021/sql/execute \"HTTP/1.1 401 Unauthorized\"", "request_id": "-"}
+2026-11-07T10:51:39.863316351Z {"ts": "2026-11-07T10:51:39+0000", "level": "warning", "logger": "app.repositories.gateway", "msg": "pyronites POST leet-guide3021/sql/execute -> 401", "request_id": "-"}
+2026-11-07T10:51:39.866122246Z {"ts": "2026-11-07T10:51:39+0000", "level": "error", "logger": "uvicorn.error", "msg": "Traceback (most recent call last):\n  File \"/opt/venv/lib/python3.11/site-packages/starlette/routing.py\", line 638, in lifespan\n    async with self.lifespan_context(app) as maybe_state:\n  File \"/usr/local/lib/python3.11/contextlib.py\", line 210, in __aenter__\n    return await anext(self.gen)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/venv/lib/python3.11/site-packages/fastapi/routing.py\", line 232, in merged_lifespan\n    async with original_context(app) as maybe_original_state:\n  File \"/usr/local/lib/python3.11/contextlib.py\", line 210, in __aenter__\n    return await anext(self.gen)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/venv/lib/python3.11/site-packages/fastapi/routing.py\", line 232, in merged_lifespan\n    async with original_context(app) as maybe_original_state:\n  File \"/usr/local/lib/python3.11/contextlib.py\", line 210, in __aenter__\n    return await anext(self.gen)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/venv/lib/python3.11/site-packages/fastapi/routing.py\", line 232, in merged_lifespan\n    async with original_context(app) as maybe_original_state:\n  File \"/usr/local/lib/python3.11/contextlib.py\", line 210, in __aenter__\n    return await anext(self.gen)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/venv/lib/python3.11/site-packages/fastapi/routing.py\", line 232, in merged_lifespan\n    async with original_context(app) as maybe_original_state:\n  File \"/usr/local/lib/python3.11/contextlib.py\", line 210, in __aenter__\n    return await anext(self.gen)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/app/app/main.py\", line 74, in lifespan\n    await container.start()\n  File \"/app/app/api/deps.py\", line 122, in start\n    applied = await run_migrations(self.gateway)\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/app/app/migrations/runner.py\", line 109, in run_migrations\n    done = await applied_versions(gateway)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/app/app/migrations/runner.py\", line 95, in applied_versions\n    await gateway.execute([_LEDGER_DDL])\n  File \"/app/app/repositories/gateway.py\", line 307, in execute\n    response = await self._request(\n               ^^^^^^^^^^^^^^^^^^^^\n  File \"/app/app/repositories/gateway.py\", line 181, in _request\n    raise UpstreamError(\napp.core.errors.UpstreamError: Datastore rejected the credentials (HTTP 401). Check that PYRONITES_KEY is a read/write key minted for project 'leet-guide3021', and that PYRONITES_PROJECT names that same project.\n", "request_id": "-"}
+2026-11-07T10:51:39.869153634Z {"ts": "2026-11-07T10:51:39+0000", "level": "error", "logger": "uvicorn.error", "msg": "Application startup failed. Exiting.", "request_id": "-"}
+2026-11-07T10:51:41.435940413Z ==> Exited with status 3
+2026-11-07T10:51:41.440424584Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
