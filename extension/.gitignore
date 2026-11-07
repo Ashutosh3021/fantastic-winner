@@ -14,4 +14,4 @@ playwright-report/
 *.pem
 *.crx
 keys/
-releases/
+# releases/

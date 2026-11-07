@@ -5,7 +5,7 @@
 # build output
 node_modules/
 dist/
-.output/
+# .output/
 
 # python
 __pycache__/
