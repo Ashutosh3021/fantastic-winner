@@ -1,0 +1,3 @@
+EXTENSION_RETURN_ORIGINS=chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal,chrome-extension://ncbohgigmifjgekpfeebkognlogpflfa
+ 
+ALLOWED_ORIGINS=http://localhost:3000,chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal,chrome-extension://ncbohgigmifjgekpfeebkognlogpflfa
