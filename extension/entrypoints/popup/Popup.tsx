@@ -56,7 +56,16 @@ import {
   setPrefs as persistPrefs,
 } from "../../src/state/prefs";
 import type { AuthState } from "../../src/messaging";
-import type { DifficultyMode, Language, Preferences, Progress, Theme, Usage } from "../../src/schemas";
+import type {
+  AIKey,
+  AIProvider,
+  DifficultyMode,
+  Language,
+  Preferences,
+  Progress,
+  Theme,
+  Usage,
+} from "../../src/schemas";
 
 const SIGNED_OUT: AuthState = { signedIn: false, email: null, emailVerified: false };
 
@@ -78,6 +87,23 @@ const THEMES: { id: Theme; label: string }[] = [
   { id: "dark", label: "Dark" },
 ];
 
+const PROVIDERS: { id: AIProvider; label: string }[] = [
+  { id: "openai", label: "OpenAI" },
+  { id: "anthropic", label: "Anthropic" },
+  { id: "gemini", label: "Google Gemini" },
+];
+
+/** "12 runs / 5h" from the actual window rather than a hard-coded limit. */
+function usageWindowLabel(usage: Usage): string {
+  const start = Date.parse(usage.window_start);
+  const end = Date.parse(usage.window_end);
+  const hours =
+    Number.isFinite(start) && Number.isFinite(end) && end > start
+      ? Math.max(1, Math.round((end - start) / 3_600_000))
+      : 5;
+  return `${usage.question_credits_limit} runs / ${hours}h`;
+}
+
 /** Human label for the current value, rendered straight into the trigger. */
 function labelOf(options: { id: string; label: string }[], value: string): string {
   return options.find((option) => option.id === value)?.label ?? value;
@@ -88,6 +114,8 @@ export function Popup() {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
+  const [planTier, setPlanTier] = useState(0);
+  const [aiKey, setAiKey] = useState<AIKey | null>(null);
   const [busy, setBusy] = useState(false);
   const [dark, setDark] = useState(false);
   const [tab, setTab] = useState("account");
@@ -117,6 +145,8 @@ export function Popup() {
         email: meRes.value.data.email || null,
         emailVerified: meRes.value.data.email_verified,
       });
+      setPlanTier(meRes.value.data.planTier);
+      setAiKey(meRes.value.data.aiKey);
       if (usageRes.status === "rejected") {
         const snapshot = meRes.value.data.usage;
         setUsage({
@@ -198,12 +228,17 @@ export function Popup() {
               email={authState?.email}
               emailVerified={authState?.emailVerified ?? false}
               usage={usage}
+              planTier={planTier}
+              aiKey={aiKey}
+              onAiKeyChange={setAiKey}
               onSignOut={async () => {
                 const res = await auth.logout();
                 if (res?.ok) {
                   setAuthState(SIGNED_OUT);
                   setUsage(null);
                   setProgress(null);
+                  setPlanTier(0);
+                  setAiKey(null);
                 }
               }}
             />
@@ -400,13 +435,21 @@ function AccountCard({
   email,
   emailVerified,
   usage,
+  planTier,
+  aiKey,
+  onAiKeyChange,
   onSignOut,
 }: {
   email: string | null | undefined;
   emailVerified: boolean;
   usage: Usage | null;
+  planTier: number;
+  aiKey: AIKey | null;
+  onAiKeyChange: (next: AIKey | null) => void;
   onSignOut: () => void | Promise<void>;
 }) {
+  const unlimited = planTier >= 1 && aiKey !== null;
+
   return (
     <Card>
       <CardHeader>
@@ -422,15 +465,27 @@ function AccountCard({
           </Notice>
         )}
 
-        {usage && (
-          <Meter
-            label="Question credits"
-            used={usage.question_credits_used}
-            total={usage.question_credits_limit}
-            resetLabel={`Resets at ${formatResetTime(usage.window_end, localTimezone())}`}
-            className="mt-1"
-          />
+        {unlimited ? (
+          <div className="mt-1 flex flex-col gap-1">
+            <Badge variant="success">Unlimited with your key</Badge>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              AI runs use your {PROVIDERS.find((item) => item.id === aiKey.provider)?.label}
+              {" "}key, so they are not counted against question credits.
+            </p>
+          </div>
+        ) : (
+          usage && (
+            <Meter
+              label={usageWindowLabel(usage)}
+              used={usage.question_credits_used}
+              total={usage.question_credits_limit}
+              resetLabel={`Resets at ${formatResetTime(usage.window_end, localTimezone())}`}
+              className="mt-1"
+            />
+          )
         )}
+
+        <AiKeySection aiKey={aiKey} onChange={onAiKeyChange} />
 
         <div className="pt-1">
           <Button variant="outline" size="sm" onClick={() => void onSignOut()}>
@@ -440,6 +495,112 @@ function AccountCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function AiKeySection({
+  aiKey,
+  onChange,
+}: {
+  aiKey: AIKey | null;
+  onChange: (next: AIKey | null) => void;
+}) {
+  const [provider, setProvider] = useState<AIProvider>("openai");
+  const [key, setKey] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (aiKey) setProvider(aiKey.provider);
+  }, [aiKey]);
+
+  async function save() {
+    const trimmed = key.trim();
+    if (trimmed.length < 8) {
+      toast("Paste a complete API key first.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await api("aiKeyPut", { body: { provider, api_key: trimmed } });
+      onChange(res.data);
+      setKey("");
+      toast("Key saved on the server.");
+    } catch {
+      toast("Could not save that key. Nothing was changed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    setSaving(true);
+    try {
+      await api("aiKeyDelete", {});
+      onChange(null);
+      toast("Key removed.");
+    } catch {
+      toast("Could not remove that key.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-1.5 border-t border-border pt-3">
+      <Label htmlFor="ai-provider">Your AI key</Label>
+
+      {aiKey ? (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-foreground">
+              {PROVIDERS.find((item) => item.id === aiKey.provider)?.label ?? aiKey.provider}
+              <span className="ml-1.5 font-mono text-muted-foreground">••••{aiKey.hint}</span>
+            </span>
+            <Button variant="ghost" size="sm" disabled={saving} onClick={() => void remove()}>
+              Remove
+            </Button>
+          </div>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Stored encrypted. Requests use this key and never fall back to ours.
+          </p>
+        </div>
+      ) : (
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Optional. Add your own provider key to keep AI runs on your account.
+        </p>
+      )}
+
+      <Select value={provider} onValueChange={(value) => setProvider(value as AIProvider)}>
+        <SelectTrigger id="ai-provider">
+          {PROVIDERS.find((item) => item.id === provider)?.label ?? provider}
+        </SelectTrigger>
+        <SelectContent>
+          {PROVIDERS.map((item) => (
+            <SelectItem key={item.id} value={item.id}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <div className="flex gap-1.5">
+        <Input
+          type="password"
+          value={key}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder={aiKey ? "Replace key" : "sk-…"}
+          className="font-mono text-xs"
+          onChange={(event) => setKey(event.target.value)}
+        />
+        <Button size="sm" disabled={saving || key.trim().length < 8} onClick={() => void save()}>
+          {saving ? "Saving…" : "Save"}
+        </Button>
+      </div>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Never sent back to this extension after saving.
+      </p>
+    </div>
   );
 }
 

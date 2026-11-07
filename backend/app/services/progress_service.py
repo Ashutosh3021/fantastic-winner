@@ -71,7 +71,13 @@ class ProgressService:
 
     # ── identity and preferences ─────────────────────────────────────────────
 
-    async def me(self, user_id: str, *, usage: dict[str, Any]) -> dict[str, Any]:
+    async def me(
+        self,
+        user_id: str,
+        *,
+        usage: dict[str, Any],
+        ai_key: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         user = await self.users.get(user_id)
         if user is None:
             raise NotFound("Account not found")
@@ -83,6 +89,8 @@ class ProgressService:
             "created_at": str(user.get("created_at", "")),
             "preferences": Preferences.model_validate(prefs),
             "usage": usage,
+            "planTier": max(0, min(1, int(user.get("plan_tier") or 0))),
+            "aiKey": ai_key,
         }
 
     async def preferences_for(self, user_id: str) -> Preferences:
@@ -126,6 +134,7 @@ class ProgressService:
             "credit_ledger",
             "credit_claims",
             "user_preferences",
+            "user_ai_credentials",
             "cm_auth_tokens",
             "content_cache",
         ):

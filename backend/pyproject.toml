@@ -14,6 +14,8 @@ dependencies = [
     "email-validator==2.3.0",
     "httpx==0.28.1",
     "PyYAML==6.0.2",
+    # Fernet encryption for user-supplied AI keys (BYOK).
+    "cryptography==46.0.3",
     # The hosted login page posts a URL-encoded form, which FastAPI parses with
     # python-multipart. Without it the auth router cannot even be constructed.
     "python-multipart==0.0.20",

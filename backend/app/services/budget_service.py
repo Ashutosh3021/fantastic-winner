@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ..ai.runtime import current_context
 from ..core.config import Settings
 from ..core.errors import DegradedMode, IpBudgetExceeded, UsageGuard
 from ..core.logging import get_logger
@@ -72,7 +73,18 @@ class BudgetService:
             logger.warning("spend alert: %.4f of %.4f", spent, cap)
         return False
 
+    def _own_key(self) -> bool:
+        """True when this request runs on the learner's provider key.
+
+        Cost guards exist to protect *our* bill. An own-key call is the
+        learner's bill, so none of the L1b/L3/L5 or analysis caps apply. Rate
+        limits are separate and still apply at the route layer.
+        """
+        return current_context().own_key
+
     async def require_not_degraded(self) -> None:
+        if self._own_key():
+            return
         if await self.degraded_mode():
             raise DegradedMode(
                 "The mentor is resting to keep costs down. Saved concepts and your journal "
@@ -84,10 +96,12 @@ class BudgetService:
     async def charge_ip(self, *, client_ip: str, tokens: int) -> None:
         """Record a generation and refuse the ones past the budget.
 
-        Applied to every AI-generating request **regardless of authentication**.
+        Applied to every server-key AI request **regardless of authentication**.
         Authenticated and anonymous traffic draw from the same bucket, which is
-        the entire point.
+        the entire point. Own-key calls skip it because they cost us nothing.
         """
+        if self._own_key():
+            return
         config = self.settings.ip_budget
         window_s = self.settings.credits.window_hours * 3600
         key = ip_hash(client_ip)
@@ -111,6 +125,8 @@ class BudgetService:
     # -- L3 per-user AI budget ---
 
     async def charge_user(self, *, identity: Identity, tokens: int) -> None:
+        if self._own_key():
+            return
         config = self.settings.user_budget
         window_start = _iso(datetime.now(UTC) - timedelta(hours=self.settings.credits.window_hours))
         used = await self.spend.tokens_for_user_since(
@@ -140,7 +156,7 @@ class BudgetService:
         in the system, and every one of those runs also wrote a mistake row, a
         progress update, a review update, XP and an event.
         """
-        if cached:
+        if cached or self._own_key():
             return
 
         config = self.settings.user_budget

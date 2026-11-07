@@ -40,6 +40,7 @@ from ..repositories.store import (
     SessionContentRepository,
     SessionRepository,
     SpendRepository,
+    UserAICredentialRepository,
     UserRepository,
 )
 from ..services.analysis_service import AnalysisService
@@ -47,6 +48,7 @@ from ..services.answer_service import AnswerService
 from ..services.approach_service import ApproachService
 from ..services.auth_service import AuthService
 from ..services.budget_service import BudgetService
+from ..services.byok_service import ByokService
 from ..services.concept_service import ConceptService
 from ..services.credit_service import CreditService
 from ..services.generator import ContentGenerator
@@ -76,6 +78,8 @@ class Container:
     generator: ContentGenerator
     credits: CreditService
     budget: BudgetService
+    byok: ByokService
+    ai_keys: UserAICredentialRepository
     rate_limiter: InProcessRateLimiter
     projector: Projector
 
@@ -143,12 +147,17 @@ class Container:
 def build_container(settings: Settings | None = None) -> Container:
     settings = settings or get_settings()
     gateway = PyronitesGateway(settings)
-    ai = AIGateway(settings)
+    # The spend writer is wired here, once: the gateway records every attempt,
+    # including failures, so ai_spend is a real cost ledger rather than a
+    # best-effort side effect.
+    spend = SpendRepository(gateway)
+    ai = AIGateway(settings, spend_writer=spend.record)
+    ai_keys = UserAICredentialRepository(gateway)
+    byok = ByokService(ai_keys, settings.byok)
 
     cache_rows = ContentCacheRepository(gateway)
     cache = ContentCache(gateway, settings.cache, repository=cache_rows)
     credits = CreditService(gateway, config=settings.credits)
-    spend = SpendRepository(gateway)
     ip_budget = IpBudgetRepository(gateway)
     budget = BudgetService(settings, spend, ip_budget)
     rate_limiter = InProcessRateLimiter()
@@ -184,6 +193,8 @@ def build_container(settings: Settings | None = None) -> Container:
         generator=generator,
         credits=credits,
         budget=budget,
+        byok=byok,
+        ai_keys=ai_keys,
         rate_limiter=rate_limiter,
         projector=projector,
         auth=AuthService(

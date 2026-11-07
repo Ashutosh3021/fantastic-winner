@@ -2,6 +2,8 @@ import { z } from "zod";
 import {
   analysisRequestSchema,
   analysisResponseSchema,
+  aiKeyInputSchema,
+  aiKeySchema,
   answerResponseSchema,
   answerSubmissionSchema,
   approachesRequestSchema,
@@ -45,6 +47,26 @@ export const ROUTES = {
     body: z.object({ refresh_token: z.string().min(1) }),
     response: z.object({ ok: z.boolean() }),
     class: "auth",
+  },
+
+  aiKeyGet: {
+    method: "GET",
+    path: "/account/ai-key",
+    response: aiKeySchema.nullable(),
+    class: "light",
+  },
+  aiKeyPut: {
+    method: "PUT",
+    path: "/account/ai-key",
+    body: aiKeyInputSchema,
+    response: aiKeySchema,
+    class: "light",
+  },
+  aiKeyDelete: {
+    method: "DELETE",
+    path: "/account/ai-key",
+    response: z.null(),
+    class: "light",
   },
 
   preferences: {

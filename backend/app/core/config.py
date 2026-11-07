@@ -226,6 +226,22 @@ class CacheConfig:
     fill_per_min: int = 30
 
 @dataclass(frozen=True)
+class ByokConfig:
+    """Bring-your-own-key storage settings.
+
+    ``encryption_key`` is a Fernet key: 32 urlsafe-base64 bytes. It is read at
+    request time rather than import time, so a deployment without it still
+    starts and only the BYOK routes fail closed.
+    """
+
+    encryption_key: str = ""
+    max_cached_providers: int = 64
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.encryption_key)
+
+@dataclass(frozen=True)
 class ProviderKeys:
     openai: str = ""
     gemini: str = ""
@@ -259,6 +275,7 @@ class Settings:
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     cache: CacheConfig = field(default_factory=CacheConfig)
     keys: ProviderKeys = field(default_factory=ProviderKeys)
+    byok: ByokConfig = field(default_factory=ByokConfig)
 
     # : L5 global cost safety (-16.9). 0 disables the cap.
     daily_spend_cap_usd: float = 0.0
@@ -383,6 +400,10 @@ def get_settings() -> Settings:
             openai=_env("AI_OPENAI_KEY") or _env("OPENAI_API_KEY"),
             gemini=_env("AI_GEMINI_KEY") or _env("GEMINI_API_KEY"),
             anthropic=_env("AI_ANTHROPIC_KEY") or _env("ANTHROPIC_API_KEY"),
+        ),
+        byok=ByokConfig(
+            encryption_key=_env("BYOK_ENCRYPTION_KEY"),
+            max_cached_providers=_env_int("BYOK_MAX_CACHED_PROVIDERS", 64),
         ),
         daily_spend_cap_usd=_env_float("DAILY_AI_SPEND_CAP_USD", 0.0),
         spend_alert_fraction=_env_float("SPEND_ALERT_FRACTION", 0.8),

@@ -16,7 +16,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr
 
 
 class Base(BaseModel):
@@ -498,6 +498,24 @@ class Usage(Base):
     max_active_sessions: int = Field(ge=1)
     min_plan_credits: int = Field(ge=1)
 
+class AIProvider(StrEnum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
+
+class AIKeyInput(Base):
+    """Inbound key. ``SecretStr`` keeps it out of reprs, logs and tracebacks."""
+
+    provider: AIProvider
+    api_key: SecretStr = Field(min_length=8, max_length=512)
+
+class AIKeyView(Base):
+    """Metadata only. There is deliberately no ciphertext and no raw key."""
+
+    provider: AIProvider
+    hint: str = Field(min_length=1, max_length=8)
+    updatedAt: str
+
 class MeResponse(Base):
     id: str
     email: EmailStr
@@ -505,6 +523,8 @@ class MeResponse(Base):
     created_at: str
     preferences: Preferences
     usage: dict[str, Any]
+    planTier: int = Field(default=0, ge=0, le=1)
+    aiKey: AIKeyView | None = None
 
 # -- progress ---
 

@@ -132,6 +132,78 @@ class UserRepository(BaseRepository):
         await PreferencesRepository(self.gw).ensure(created_id)
         return {**payload, "id": created_id}, True
 
+class UserAICredentialRepository(BaseRepository):
+    """One encrypted own key per user.
+
+    Kept in its own table so a profile read never pulls a secret, and so key
+    rotation has its own timestamps. The primary key is ``user_id`` (there is no
+    separate ``id``), so the generic row helpers do not apply here.
+    """
+
+    table = "user_ai_credentials"
+
+    async def for_user(self, user_id: str) -> dict[str, Any] | None:
+        row = await self.gw.query_one(
+            f"SELECT * FROM {safe_identifier(self.table)} "
+            f"WHERE user_id = {encode(user_id)}"
+        )
+        return _row(row) if row else None
+
+    async def upsert(
+        self,
+        *,
+        user_id: str,
+        provider: str,
+        ciphertext: str,
+        hint: str,
+    ) -> dict[str, Any]:
+        existing = await self.for_user(user_id)
+        now = now_iso()
+        if existing:
+            await self.gw.execute(
+                [
+                    f"UPDATE {safe_identifier(self.table)} SET "
+                    f"provider = {encode(provider)}, "
+                    f"key_ciphertext = {encode(ciphertext)}, "
+                    f"key_hint = {encode(hint)}, "
+                    f"updated_at = {encode(now)} "
+                    f"WHERE user_id = {encode(user_id)}"
+                ]
+            )
+            return {
+                **existing,
+                "provider": provider,
+                "key_ciphertext": ciphertext,
+                "key_hint": hint,
+                "updated_at": now,
+            }
+
+        await self.gw.execute(
+            [
+                f"INSERT INTO {safe_identifier(self.table)} "
+                "(user_id, provider, key_ciphertext, key_hint, created_at, updated_at) "
+                f"VALUES ({encode(user_id)}, {encode(provider)}, {encode(ciphertext)}, "
+                f"{encode(hint)}, {encode(now)}, {encode(now)})"
+            ]
+        )
+        return {
+            "user_id": user_id,
+            "provider": provider,
+            "key_ciphertext": ciphertext,
+            "key_hint": hint,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    async def delete_for_user(self, user_id: str) -> bool:
+        batch = await self.gw.execute(
+            [
+                f"DELETE FROM {safe_identifier(self.table)} "
+                f"WHERE user_id = {encode(user_id)}"
+            ]
+        )
+        return batch.changes() > 0
+
 class PreferencesRepository(BaseRepository):
     table = "user_preferences"
 
@@ -440,6 +512,7 @@ class SpendRepository(BaseRepository):
             "outcome": str(fields.get("outcome", "unknown")),
             "duration_ms": int(fields.get("duration_ms", 0)),
             "finish_reason": fields.get("finish_reason"),
+            "funded_by": str(fields.get("funded_by") or "codementor"),
             "created_at": now_iso(),
         }
         await self.gw.insert_row(self.table, payload)
@@ -454,16 +527,20 @@ class SpendRepository(BaseRepository):
         return cost, tokens
 
     async def query_since(self, since_iso: str) -> list[dict[str, Any]]:
+        # Own-key spend is the learner's bill, not ours, so it must not feed the
+        # L5 daily cap. Rows written before 0004 default to 'codementor'.
         sql = (
             f"SELECT cost_usd, tokens_in, tokens_out FROM {safe_identifier(self.table)} "
-            f"WHERE created_at >= {encode(since_iso)}"
+            f"WHERE created_at >= {encode(since_iso)} "
+            "AND COALESCE(funded_by, 'codementor') <> 'user'"
         )
         return await self.gw.query_all(sql)
 
     async def tokens_for_user_since(self, *, user_id: str, since_iso: str) -> int:
         sql = (
             f"SELECT tokens_in, tokens_out FROM {safe_identifier(self.table)} "
-            f"WHERE user_id = {encode(user_id)} AND created_at >= {encode(since_iso)}"
+            f"WHERE user_id = {encode(user_id)} AND created_at >= {encode(since_iso)} "
+            "AND COALESCE(funded_by, 'codementor') <> 'user'"
         )
         rows = await self.gw.query_all(sql)
         return sum(int(row["tokens_in"] or 0) + int(row["tokens_out"] or 0) for row in rows)

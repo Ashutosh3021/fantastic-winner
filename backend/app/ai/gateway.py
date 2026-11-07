@@ -17,9 +17,11 @@ One entry point, `run`, and the guarantees it makes:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import random
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,6 +37,7 @@ from ..core.errors import (
     UpstreamError,
 )
 from ..core.logging import get_logger, hash_user_id
+from . import runtime
 from .breaker import BreakerRegistry
 from .providers import (
     AnthropicProvider,
@@ -48,6 +51,14 @@ from .providers import (
 )
 
 logger = get_logger(__name__)
+
+#: Own-key providers reuse the existing HTTP classes. Nothing else changes:
+#: the key is a constructor argument, not a new provider implementation.
+_PROVIDER_CLASSES: dict[str, type[OpenAIProvider | AnthropicProvider | GeminiProvider]] = {
+    "openai": OpenAIProvider,
+    "anthropic": AnthropicProvider,
+    "gemini": GeminiProvider,
+}
 
 # : Pools, so a heavy generation cannot starve an interactive answer check.
 POOL_INTERACTIVE = "interactive"
@@ -109,9 +120,9 @@ class AIGateway:
         )
         self._providers = self._build_providers(settings)
         self._pools = self._build_pools()
-        # : Filled in by the request context so spend rows carry user attribution.
-        self._current_user_id: str | None = None
-        self._current_request_id: str | None = None
+        # : Per-key provider instances, keyed by sha256 of the raw key. The raw
+        # : key is never used as a dictionary key or logged.
+        self._byok_providers: OrderedDict[str, tuple[str, Any]] = OrderedDict()
 
     # --- construction ---
 
@@ -137,9 +148,13 @@ class AIGateway:
         return {pool: asyncio.Semaphore(max(1, size)) for pool, size in sizes.items()}
 
     def bind_request(self, *, user_id: str | None, request_id: str | None) -> None:
-        """Attribute every spend row written until the next bind."""
-        self._current_user_id = user_id
-        self._current_request_id = request_id
+        """Attribute spend in the current task to this caller.
+
+        This writes the request-scoped context rather than an attribute on the
+        gateway, so two concurrent requests cannot overwrite each other's
+        attribution.
+        """
+        runtime.set_request_context(user_id=user_id, request_id=request_id)
 
     def provider_names(self) -> list[str]:
         return sorted(self._providers)
@@ -161,7 +176,38 @@ class AIGateway:
             except Exception as exc:
                 logger.warning("closing provider %s failed: %s", name, exc)
 
-    async def run(self, spec: TaskSpec) -> GatewayResult:
+        own = list(self._byok_providers.values())
+        self._byok_providers.clear()
+        for _name, provider in own:
+            try:
+                await provider.aclose()
+            except Exception as exc:
+                logger.warning("closing an own-key provider failed: %s", exc)
+
+    async def forget_own_key(self, api_key: str) -> None:
+        """Drop a cached provider after its key is removed or rotated."""
+        cached = self._byok_providers.pop(_key_digest(api_key), None)
+        if cached is None:
+            return
+        try:
+            await cached[1].aclose()
+        except Exception as exc:
+            logger.warning("closing a removed own-key provider failed: %s", exc)
+
+    async def run(
+        self,
+        spec: TaskSpec,
+        *,
+        api_key: str | None = None,
+        provider: str | None = None,
+    ) -> GatewayResult:
+        context = runtime.current_context()
+        own_key = api_key or context.api_key
+        own_provider = provider or context.provider
+
+        if own_key:
+            return await self._run_with_own_key(spec, own_provider, own_key)
+
         order = self._config.provider_order.get(spec.tier, ("openai",))
         semaphore = self._pools[spec.pool]
 
@@ -176,19 +222,85 @@ class AIGateway:
         finally:
             semaphore.release()
 
-    async def _run_with_fallback(self, spec: TaskSpec, order: tuple[str, ...]) -> GatewayResult:
+    async def _run_with_own_key(
+        self, spec: TaskSpec, provider_name: str | None, api_key: str
+    ) -> GatewayResult:
+        """Use exactly one provider, and never fall back to a server key.
+
+        Falling back would silently move the bill to us after the learner asked
+        us to use their key. A failure surfaces instead, and the learner can fix
+        or replace the key.
+        """
+        if not provider_name or provider_name not in _PROVIDER_CLASSES:
+            raise AiUnavailable("Choose an AI provider before using your own key.")
+
+        semaphore = self._pools[spec.pool]
+        try:
+            await asyncio.wait_for(semaphore.acquire(), timeout=self._config.queue_timeout_s)
+        except TimeoutError as exc:
+            await self._record_spend(
+                spec,
+                outcome="queue_timeout",
+                provider=provider_name,
+                cost=0.0,
+                funded_by=runtime.FUNDED_BY_USER,
+            )
+            raise AiBusy("The mentor is busy right now.") from exc
+
+        try:
+            provider = await self._provider_for_key(provider_name, api_key)
+            digest = _key_digest(api_key)
+            return await self._run_with_fallback(
+                spec,
+                (provider_name,),
+                providers={provider_name: provider},
+                breaker_scope=digest[:12],
+                funded_by=runtime.FUNDED_BY_USER,
+            )
+        finally:
+            semaphore.release()
+
+    async def _provider_for_key(self, name: str, api_key: str) -> Any:
+        digest = _key_digest(api_key)
+        cached = self._byok_providers.get(digest)
+        if cached is not None:
+            self._byok_providers.move_to_end(digest)
+            return cached[1]
+
+        provider = _PROVIDER_CLASSES[name](api_key, self._config.model_for)
+        self._byok_providers[digest] = (name, provider)
+        limit = max(1, self._settings.byok.max_cached_providers)
+        while len(self._byok_providers) > limit:
+            _old_digest, (_old_name, evicted) = self._byok_providers.popitem(last=False)
+            try:
+                await evicted.aclose()
+            except Exception as exc:
+                logger.warning("closing an evicted own-key provider failed: %s", exc)
+        return provider
+
+    async def _run_with_fallback(
+        self,
+        spec: TaskSpec,
+        order: tuple[str, ...],
+        *,
+        providers: dict[str, Any] | None = None,
+        breaker_scope: str = "",
+        funded_by: str = runtime.FUNDED_BY_CODEMENTOR,
+    ) -> GatewayResult:
         attempts: list[dict[str, Any]] = []
         last_error: Exception | None = None
         tried: set[str] = set()
+        available = providers if providers is not None else self._providers
 
         for name in order:
-            provider = self._providers.get(name)
+            provider = available.get(name)
             if provider is None or not provider.available():
                 continue
             if name in tried:
                 continue
 
-            breaker = self._breakers.for_provider(name)
+            breaker_key = f"{name}:{breaker_scope}" if breaker_scope else name
+            breaker = self._breakers.for_provider(breaker_key)
             if not breaker.allows():
                 logger.info("breaker open, skipping provider %s", name)
                 continue
@@ -200,7 +312,12 @@ class AIGateway:
                 breaker.record_failure()
                 attempts.append(_attempt_row(spec, name, outcome="provider_error"))
                 await self._record_spend(
-                    spec, outcome="provider_error", provider=name, cost=0.0, attempts=attempts
+                    spec,
+                    outcome="provider_error",
+                    provider=name,
+                    cost=0.0,
+                    attempts=attempts,
+                    funded_by=funded_by,
                 )
                 last_error = exc
                 if not exc.retryable:
@@ -210,7 +327,12 @@ class AIGateway:
                 breaker.record_failure()
                 attempts.append(_attempt_row(spec, name, outcome="timeout"))
                 await self._record_spend(
-                    spec, outcome="timeout", provider=name, cost=0.0, attempts=attempts
+                    spec,
+                    outcome="timeout",
+                    provider=name,
+                    cost=0.0,
+                    attempts=attempts,
+                    funded_by=funded_by,
                 )
                 last_error = UpstreamError(f"{name} timed out")
                 continue
@@ -230,6 +352,7 @@ class AIGateway:
                     tokens_in=result.tokens_in,
                     tokens_out=result.tokens_out,
                     finish_reason=result.finish_reason,
+                    funded_by=funded_by,
                 )
                 raise AiOutputTruncated(
                     "The response reached its length budget before finishing."
@@ -259,6 +382,7 @@ class AIGateway:
                         attempts=attempts,
                         tokens_in=result.tokens_in,
                         tokens_out=result.tokens_out,
+                        funded_by=funded_by,
                     )
                     raise AiInvalidOutput("The response did not match the expected shape.")
 
@@ -273,6 +397,7 @@ class AIGateway:
                     attempts=attempts,
                     tokens_in=repaired_result.tokens_in,
                     tokens_out=repaired_result.tokens_out,
+                    funded_by=funded_by,
                 )
                 return GatewayResult(
                     payload=repaired.payload,
@@ -296,6 +421,7 @@ class AIGateway:
                 tokens_in=result.tokens_in,
                 tokens_out=result.tokens_out,
                 finish_reason=result.finish_reason,
+                funded_by=funded_by,
             )
             return GatewayResult(
                 payload=validated,
@@ -310,7 +436,12 @@ class AIGateway:
             )
 
         await self._record_spend(
-            spec, outcome="all_providers_failed", provider="", cost=0.0, attempts=attempts
+            spec,
+            outcome="all_providers_failed",
+            provider="",
+            cost=0.0,
+            attempts=attempts,
+            funded_by=funded_by,
         )
         logger.warning(
             "all providers failed for %s (%s): %s",
@@ -454,16 +585,18 @@ class AIGateway:
         tokens_in: int = 0,
         tokens_out: int = 0,
         finish_reason: str | None = None,
+        funded_by: str | None = None,
     ) -> None:
         if self._spend_writer is None:
             return
+        context = runtime.current_context()
         model = ""
         if provider:
             model = self._config.model_for(provider, spec.tier)
         try:
             await self._spend_writer(
-                request_id=self._current_request_id or "-",
-                user_id=self._current_user_id or "-",
+                request_id=context.request_id or "-",
+                user_id=context.user_id or "-",
                 task_id=spec.task_id,
                 prompt_version=spec.prompt_version,
                 provider=provider or "-",
@@ -476,6 +609,7 @@ class AIGateway:
                 outcome=outcome,
                 finish_reason=finish_reason,
                 attempts=len(attempts or []),
+                funded_by=funded_by or context.funded_by,
             )
         except Exception:
             logger.exception("failed to record ai_spend")
@@ -490,6 +624,10 @@ class _Attempt:
     @property
     def truncated(self) -> bool:
         return self.result.truncated
+
+def _key_digest(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
 
 def _attempt_row(spec: TaskSpec, provider: str, *, outcome: str, **extra: Any) -> dict[str, Any]:
     row = {

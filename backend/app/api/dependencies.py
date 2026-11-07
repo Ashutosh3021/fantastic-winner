@@ -9,12 +9,15 @@ sessions.
 
 from __future__ import annotations
 
+import contextlib
 import re
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, replace
 from typing import Annotated
 
 from fastapi import Depends, Header, Request
 
+from ..ai import runtime
 from ..core.errors import BadRequest, RateLimited, Unauthorized
 from ..core.logging import get_logger, hash_user_id
 from ..ratelimit.limiter import BucketSpec
@@ -86,6 +89,13 @@ async def get_caller(
         raise Unauthorized("Sign in to continue.")
 
     identity = await container.auth.identity_for(raw)
+
+    # One metadata read per authenticated request. It does not decrypt anything:
+    # the AI routes do that only when they are about to call a provider.
+    credential = await container.ai_keys.for_user(identity.user_id)
+    request.state.ai_credential = credential
+    if credential is not None:
+        identity = replace(identity, has_own_key=True)
     request.state.identity = identity
 
     return Caller(
@@ -96,6 +106,57 @@ async def get_caller(
 
 
 CallerDep = Annotated[Caller, Depends(get_caller)]
+
+
+@dataclass(frozen=True)
+class AIContext:
+    """The AI-relevant slice of the caller, plus the key for this request."""
+
+    own_key: bool
+    provider: str | None
+    api_key: str | None
+
+
+async def get_ai_context(
+    request: Request, container: ContainerDep, caller: CallerDep
+) -> AsyncIterator[AIContext]:
+    """Decrypt an own key for the duration of one AI request.
+
+    Credential metadata was already loaded by ``get_caller``; this dependency
+    turns it into the request-scoped context the gateway and budget layers read.
+    The raw key exists only inside this generator's frame and the provider call
+    that consumes it.
+    """
+    row = getattr(request.state, "ai_credential", None)
+    if row is None and caller.identity.has_own_key:
+        row = await container.ai_keys.for_user(caller.identity.user_id)
+
+    provider: str | None = None
+    api_key: str | None = None
+    if row is not None:
+        provider, api_key = container.byok.decrypt_row(row)
+
+    token = runtime.set_context(
+        runtime.AICallContext(
+            api_key=api_key,
+            provider=provider,
+            user_id=caller.identity.user_id,
+            request_id=getattr(request.state, "request_id", None),
+            funded_by=(
+                runtime.FUNDED_BY_USER if api_key else runtime.FUNDED_BY_CODEMENTOR
+            ),
+        )
+    )
+    try:
+        yield AIContext(
+            own_key=bool(api_key and provider), provider=provider, api_key=api_key
+        )
+    finally:
+        with contextlib.suppress(ValueError):
+            runtime.reset_context(token)
+
+
+AIContextDep = Annotated[AIContext, Depends(get_ai_context)]
 
 
 def require_idempotency_key(caller: Caller) -> str:
@@ -151,6 +212,8 @@ def enforce_rate_limit(
 
 
 __all__ = [
+    "AIContext",
+    "AIContextDep",
     "Caller",
     "CallerDep",
     "ContainerDep",

@@ -57,6 +57,7 @@ from ...schemas.models import (
 from ...services.answer_service import AnswerContext
 from ...services.concept_service import MAX_SIMPLIFICATION_LEVELS
 from ..dependencies import (
+    AIContextDep,
     CallerDep,
     ContainerDep,
     enforce_rate_limit,
@@ -74,7 +75,10 @@ def _problem_dict(problem: ProblemData) -> dict[str, Any]:
 
 @router.post("/problems/approaches", response_model=ApproachesResponse)
 async def list_approaches(
-    container: ContainerDep, caller: CallerDep, body: ApproachesRequest
+    container: ContainerDep,
+    caller: CallerDep,
+    body: ApproachesRequest,
+    ai_ctx: AIContextDep,
 ) -> ApproachesResponse:
     enforce_rate_limit(container, caller, route_class="light")
     caller.identity.require_verified(
@@ -199,6 +203,7 @@ async def read_concept(
     container: ContainerDep,
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
+    ai_ctx: AIContextDep,
 ) -> ConceptResponse:
     """Return the concept card. This is part of the plan, not a credit event.
 
@@ -252,6 +257,7 @@ async def simplify_concept(
     container: ContainerDep,
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
+    ai_ctx: AIContextDep,
 ) -> SimplifyResponse:
     enforce_rate_limit(container, caller, route_class="heavy")
     identity = caller.identity
@@ -315,6 +321,7 @@ async def generate_questions(
     container: ContainerDep,
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
+    ai_ctx: AIContextDep,
 ) -> GenerateQuestionsResponse:
     enforce_rate_limit(container, caller, route_class="heavy")
     identity = caller.identity
@@ -340,7 +347,7 @@ async def generate_questions(
 
     key = require_idempotency_key(caller)
     reserve = max(1, container.settings.credits.min_plan_questions)
-    await _spend_credit(container, caller, key, session_id, reserve_n=reserve)
+    charged = await _spend_credit(container, caller, key, session_id, reserve_n=reserve)
 
     try:
         shape = await container.microq.generate_shape(
@@ -357,22 +364,25 @@ async def generate_questions(
             content_version="v1",
         )
     except AppError:
-        await container.credits.rollback(
-            idempotency_key=key,
-            user_id=identity.user_id,
-            session_id=session_id,
-            reason="plan_failed",
-        )
+        if charged:
+            await container.credits.rollback(
+                idempotency_key=key,
+                user_id=identity.user_id,
+                session_id=session_id,
+                reason="plan_failed",
+            )
         raise
 
     # Credits meter questions generated, not questions reserved: a four-question
-    # plan returns the fifth credit.
-    await container.credits.settle(
-        idempotency_key=key,
-        user_id=identity.user_id,
-        session_id=session_id,
-        actual_n=len(shape.questions),
-    )
+    # plan returns the fifth credit. A tier-1 own-key request never claims, so
+    # there is nothing to settle.
+    if charged:
+        await container.credits.settle(
+            idempotency_key=key,
+            user_id=identity.user_id,
+            session_id=session_id,
+            actual_n=len(shape.questions),
+        )
 
     first = shape.questions[0]
     return GenerateQuestionsResponse(
@@ -402,6 +412,7 @@ async def request_hint(
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
     index: Annotated[int, Path(ge=1, le=50)],
+    ai_ctx: AIContextDep,
 ) -> HintResponse:
     """Hints are free.
 
@@ -448,6 +459,7 @@ async def reveal_step(
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
     index: Annotated[int, Path(ge=1, le=50)],
+    ai_ctx: AIContextDep,
 ) -> RevealResponse:
     """Release the current step on explicit request (§10.8).
 
@@ -495,6 +507,7 @@ async def submit_answer(
     session_id: Annotated[str, Path(max_length=64)],
     index: Annotated[int, Path(ge=1, le=50)],
     submission: AnswerSubmission,
+    ai_ctx: AIContextDep,
 ) -> AnswerResponse:
     """Answering is free; only generating questions costs credits (§10.1)."""
     enforce_rate_limit(container, caller, route_class="check")
@@ -556,6 +569,7 @@ async def analyse_code(
     caller: CallerDep,
     session_id: Annotated[str, Path(max_length=64)],
     body: AnalysisRequest,
+    ai_ctx: AIContextDep,
 ) -> dict[str, Any]:
     enforce_rate_limit(container, caller, route_class="analysis")
     identity = caller.identity
@@ -571,7 +585,7 @@ async def analyse_code(
     )
 
     key = require_idempotency_key(caller)
-    await _spend_credit(container, caller, key, session_id, reserve_n=0)
+    charged = await _spend_credit(container, caller, key, session_id, reserve_n=0)
 
     language = body.language or bundle.language
     try:
@@ -584,28 +598,31 @@ async def analyse_code(
             client_ip=caller.client_ip,
         )
     except DegradedMode:
-        await container.credits.rollback(
-            idempotency_key=key,
-            user_id=identity.user_id,
-            session_id=session_id,
-            reason="no_code",
-        )
+        if charged:
+            await container.credits.rollback(
+                idempotency_key=key,
+                user_id=identity.user_id,
+                session_id=session_id,
+                reason="no_code",
+            )
         raise
     except AppError:
-        await container.credits.rollback(
+        if charged:
+            await container.credits.rollback(
+                idempotency_key=key,
+                user_id=identity.user_id,
+                session_id=session_id,
+                reason="analysis_failed",
+            )
+        raise
+
+    if charged:
+        await container.credits.settle(
             idempotency_key=key,
             user_id=identity.user_id,
             session_id=session_id,
-            reason="analysis_failed",
+            actual_n=0,
         )
-        raise
-
-    await container.credits.settle(
-        idempotency_key=key,
-        user_id=identity.user_id,
-        session_id=session_id,
-        actual_n=0,
-    )
     return result.model_dump(by_alias=True)
 
 
@@ -619,12 +636,16 @@ async def _spend_credit(
     session_id: str,
     *,
     reserve_n: int,
-) -> None:
-    """Claim the credits for one request, or explain why not.
+) -> bool:
+    """Claim credits, or report that this request does not use them.
 
-    A retry with the same key does not re-charge: the claim row already exists and
-    the cached artifact is returned instead.
+    Returns ``False`` when a tier-1 learner is running on their own key: that
+    combination is explicitly unmetered. A tier-0 own-key request still claims,
+    per the enforcement matrix. A retry with the same key does not re-charge.
     """
+    if caller.identity.plan_tier >= 1 and caller.identity.has_own_key:
+        return False
+
     claim = await container.credits.claim(
         idempotency_key=key,
         user_id=caller.identity.user_id,
@@ -632,7 +653,7 @@ async def _spend_credit(
         session_id=session_id,
     )
     if claim.acquired:
-        return
+        return True
     if claim.retryable:
         raise GenerationInProgress("That request is still running. Try again shortly.")
     if claim.reserve_error:

@@ -45,6 +45,11 @@ class Identity:
     email: str
     email_verified: bool
     account_age_days: float
+    # : 0 = free/credits, 1 = unlimited with an own key.
+    plan_tier: int = 0
+    # : Filled by the request layer from stored credential metadata, never from
+    # : a client-supplied field.
+    has_own_key: bool = False
 
     def require_verified(self, *, enforced: bool) -> None:
         """The gate on every AI-generating route (§16.7).
@@ -161,6 +166,7 @@ class AuthService:
             email=str(user.get("email") or ""),
             email_verified=bool(user.get("email_verified_at")),
             account_age_days=age_days,
+            plan_tier=max(0, min(1, int(user.get("plan_tier") or 0))),
         )
 
     async def _issue_pair(self, user_id: str) -> dict[str, Any]:

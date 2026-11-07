@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { TWO_SUM_FIXTURE } from "./fixture";
-import { fakeState, launchExtension } from "./harness";
+import { fakeState, launchExtension, setPlanTier } from "./harness";
 
 test("signed-in popup and the full learning loop", async () => {
   test.setTimeout(120_000);
@@ -28,6 +28,22 @@ test("signed-in popup and the full learning loop", async () => {
     await popup.getByRole("tab", { name: "Account" }).click();
     await expect(popup.getByText("Signed in", { exact: true })).toBeVisible();
     await expect(popup.getByText("e2e@example.com", { exact: true })).toBeVisible();
+
+    // Own-key settings: save masks the key, remove clears it.
+    await popup.getByPlaceholder("sk-…").fill("sk-e2e-own-key-1234");
+    await popup.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(popup.getByText("••••1234")).toBeVisible();
+
+    // A tier-1 account with a key is uncapped; removing the key restores metering.
+    await setPlanTier(1);
+    await popup.reload();
+    await popup.getByRole("tab", { name: "Account" }).click();
+    await expect(popup.getByText("Unlimited with your key")).toBeVisible();
+    await popup.getByRole("button", { name: "Remove" }).click();
+    await expect(popup.getByText("••••1234")).toBeHidden();
+    await expect(popup.getByText("Unlimited with your key")).toBeHidden();
+    await setPlanTier(0);
+
     await popup.close();
 
     const page = await context.newPage();

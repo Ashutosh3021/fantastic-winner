@@ -9,3 +9,9 @@ stats.html
 .DS_Store
 test-results/
 playwright-report/
+
+# local signing key and packaged builds
+*.pem
+*.crx
+keys/
+releases/

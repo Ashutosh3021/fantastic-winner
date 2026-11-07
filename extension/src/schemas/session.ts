@@ -98,6 +98,28 @@ export type Preferences = z.infer<typeof preferencesSchema>;
 export const preferencesPatchSchema = preferencesSchema.partial().omit({ prefs_version: true });
 export type PreferencesPatch = z.infer<typeof preferencesPatchSchema>;
 
+export const aiProviderSchema = z.enum(["openai", "anthropic", "gemini"]);
+export type AIProvider = z.infer<typeof aiProviderSchema>;
+
+/**
+ * Metadata only. The raw key never appears in a response, and `.strict()` turns
+ * a server that leaks one into a validation failure instead of a silent strip.
+ */
+export const aiKeySchema = z
+  .object({
+    provider: aiProviderSchema,
+    hint: z.string().min(1).max(8),
+    updatedAt: isoDate,
+  })
+  .strict();
+export type AIKey = z.infer<typeof aiKeySchema>;
+
+export const aiKeyInputSchema = z.object({
+  provider: aiProviderSchema,
+  api_key: z.string().min(8).max(512),
+});
+export type AIKeyInput = z.infer<typeof aiKeyInputSchema>;
+
 export const meSchema = z.object({
   id: z.string(),
   email: z.string(),
@@ -113,5 +135,7 @@ export const meSchema = z.object({
     max_active_sessions: z.number().int().min(1).optional(),
     min_plan_credits: z.number().int().min(1).optional(),
   }),
+  planTier: z.number().int().min(0).max(1).default(0),
+  aiKey: aiKeySchema.nullable().default(null),
 });
 export type Me = z.infer<typeof meSchema>;

@@ -24,6 +24,7 @@ ERROR_CODES = (
     "insufficient_credits",
     "active_session_limit",
     "generation_in_progress",
+    "byok_unavailable",
     "usage_guard",
     "question_locked",
     "checklist_locked",
@@ -150,6 +151,16 @@ class QuestionLocked(AppError):
 class ChecklistLocked(AppError):
     code = "checklist_locked"
     status = 409
+
+class ByokUnavailable(AppError):
+    """The server cannot store or read an own key right now.
+
+    Missing encryption configuration is a deployment mistake, not a learner
+    mistake, so the message never blames the learner and never echoes a key.
+    """
+
+    code = "byok_unavailable"
+    status = 503
 
 class AiBusy(AppError):
     code = "ai_busy"

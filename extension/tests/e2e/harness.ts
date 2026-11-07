@@ -93,6 +93,16 @@ export async function launchExtension(): Promise<ExtensionContext> {
   return { context, extensionId };
 }
 
+export async function setPlanTier(tier: number): Promise<void> {
+  const base = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:8787";
+  const res = await fetch(`${base}/__plan`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tier }),
+  });
+  if (!res.ok) throw new Error(`Fake API plan failed: ${res.status}`);
+}
+
 export async function fakeState(): Promise<Record<string, unknown>> {
   const base = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:8787";
   const res = await fetch(`${base}/__state`);

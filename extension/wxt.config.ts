@@ -61,6 +61,10 @@ export default defineConfig({
 
   manifest: {
     name: "CodeMentor",
+    // Pin the unpacked build to the same ID as the packaged CRX. Without this,
+    // Chrome derives the ID from the install path and the backend's exact-origin
+    // allowlist rejects sign-in.
+    key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoeh/VHVaqzOx0Zj89IX24ArCX0tC2Aw2Q/xBdM0pqj26ZdczmWh6QZC2z8ELEcNQs+FooNN4rqvQAdBtz76HGItpaPUUyLtzHODDMLPT8ef5BACR8oy8Y+cdsiI+ftwAaCcK2u6PQsUusklE0LmiF+80MajljHEuvFuWH1H+97DQcePo3X5BQwg6AO+SSZ0zjmS7Xy7OYvr9Ss0sfg0F5SBKCC+mjNyQAKIY9PZZgQgFvyzTHm7ALAVyeyvIqE57O34JQJrJeMJGJGz3UXvtGw3VOhB2JX7WXrAb/m8qV/d8oBe3oh8ie8NW6Mor7ig1wElwwSN/VmGGByXB8cDHjwIDAQAB",
     short_name: "CodeMentor",
     description:
       "A step-by-step thinking coach for LeetCode. Learn the concept first, answer a few small questions, then write the solution yourself.",

@@ -41,6 +41,8 @@ const state = {
   conceptCalls: 0,
   checklistCalls: 0,
   creditsUsed: 0,
+  aiKey: null,
+  planTier: 0,
 };
 
 function resetState() {
@@ -59,6 +61,8 @@ function resetState() {
   state.conceptCalls = 0;
   state.checklistCalls = 0;
   state.creditsUsed = 0;
+  state.aiKey = null;
+  state.planTier = 0;
 }
 
 function json(res, status, body) {
@@ -141,6 +145,8 @@ function me() {
     created_at: NOW,
     preferences: preferences(),
     usage: usage(),
+    planTier: state.planTier,
+    aiKey: state.aiKey,
   };
 }
 
@@ -222,8 +228,14 @@ function route(method, pathname) {
   if (method === "OPTIONS") return { kind: "options" };
   if (pathname === "/__state") return { kind: "state" };
   if (pathname === "/__reset") return { kind: "reset" };
+  if (pathname === "/__plan" && method === "POST") return { kind: "plan" };
 
   if (pathname === "/v1/me" && method === "GET") return { kind: "me" };
+  if (pathname === "/v1/account/ai-key" && method === "GET") return { kind: "aiKeyGet" };
+  if (pathname === "/v1/account/ai-key" && method === "PUT") return { kind: "aiKeyPut" };
+  if (pathname === "/v1/account/ai-key" && method === "DELETE") {
+    return { kind: "aiKeyDelete" };
+  }
   if (pathname === "/v1/me" && method === "DELETE") return { kind: "null" };
   if (pathname === "/v1/usage" && method === "GET") return { kind: "usage" };
   if (pathname === "/v1/progress" && method === "GET") return { kind: "progress" };
@@ -282,6 +294,21 @@ const server = createServer(async (req, res) => {
       return fail(res, 404, "not_found", `No fake route for ${method} ${pathname}`);
     case "me":
       return ok(res, me());
+    case "aiKeyGet":
+      return ok(res, state.aiKey);
+    case "aiKeyPut":
+      state.aiKey = {
+        provider: body.provider ?? "openai",
+        hint: String(body.api_key ?? "").slice(-4),
+        updatedAt: NOW,
+      };
+      return ok(res, state.aiKey);
+    case "aiKeyDelete":
+      state.aiKey = null;
+      return ok(res, null);
+    case "plan":
+      state.planTier = Number(body.tier) === 1 ? 1 : 0;
+      return ok(res, { planTier: state.planTier });
     case "null":
       return ok(res, null);
     case "usage":
