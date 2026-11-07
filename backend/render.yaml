@@ -31,6 +31,15 @@ services:
         sync: false
       - key: PYRONITES_PROJECT
         sync: false
+      # Required. Without this the service boots and then fails every query with
+      # 401 from Pyronites. Blueprint sync prompts for it because it is declared
+      # here; it is never committed.
+      - key: PYRONITES_KEY
+        sync: false
+      # Fernet key for stored BYOK credentials. Optional for boot, but the
+      # /account/ai-key routes fail closed (503) when it is absent.
+      - key: BYOK_ENCRYPTION_KEY
+        sync: false
       - key: PYRONITES_AUTO_MIGRATE
         value: "false"
       - key: PYRONITES_TIMEOUT_S
@@ -52,9 +61,9 @@ services:
       # it from the signing key) and an unset value silently rejects every
       # sign-in instead of failing loudly.
       - key: EXTENSION_RETURN_ORIGINS
-        value: "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
+        value: "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal,chrome-extension://ncbohgigmifjgekpfeebkognlogpflfa"
       - key: ALLOWED_ORIGINS
-        value: "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
+        value: "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal,chrome-extension://ncbohgigmifjgekpfeebkognlogpflfa"
       - key: AI_ANTHROPIC_KEY
         sync: false
       - key: AI_OPENAI_KEY
