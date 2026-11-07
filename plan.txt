@@ -1,0 +1,52 @@
+Plan updated with BYOK. Still no code written.
+Final plan
+1. Migration 0004_plan_and_byok.sql
+ALTER TABLE cm_users ADD COLUMN plan_tier INTEGER NOT NULL DEFAULT 0
+  CHECK (plan_tier IN (0, 1));
+
+CREATE TABLE IF NOT EXISTS user_ai_credentials (
+  user_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK (provider IN ('openai','anthropic','gemini')),
+  key_ciphertext TEXT NOT NULL,
+  key_hint TEXT NOT NULL,          -- last 4 chars, for display only
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+- plan_tier on cm_users (PyroCore users stays auth-only). Column is plan_tier because tier already means model routing.
+- One active own key per user; user_ai_credentials separate from cm_users so secrets/timestamps/rotation stay isolated.
+- New users default 0; existing rows backfill automatically.
+2. Config
+- BYOK_ENCRYPTION_KEY (Fernet key, 32-byte urlsafe base64) in core/config.py.
+- Missing key → BYOK endpoints fail closed with a clear error; app still starts.
+3. API (account router)
+- PUT /account/ai-key {provider, api_key} → encrypt, store, return {provider, hint, updated_at}.
+- GET /account/ai-key → metadata only, never the key.
+- DELETE /account/ai-key.
+- Pydantic SecretStr; key excluded from repr/logs; tests assert it never appears in responses or log output.
+- No key validation call in v1 (avoids spending the user's quota). Invalid key surfaces on first real call.
+4. /me + Identity
+- Identity.plan_tier: int, has_own_key: bool.
+- MeResponse adds planTier and aiKey: {provider, hint, updatedAt} | null.
+- Manual tier upgrade only: UPDATE cm_users SET plan_tier=1 WHERE email=....
+5. Gateway routing
+- AIGateway.run(spec, *, api_key=None, provider=None).
+- With an own key: bypass tier fallback order, use that provider only, never auto-fall back to a server key (avoids silently billing us).
+- Reuse Provider classes; per-key provider instance cached by sha256(key) (LRU) and closed on eviction/shutdown.
+- Cache keys unchanged — content is provider-independent, so BYOK and server-key users share cache.
+6. Enforcement matrix
+plan	key used	credits 12/5h	user/IP AI budgets	rate limits
+0	server	yes	yes	yes
+0	own	yes (confirmed)	cost-based guards skipped	yes
+1	own	no	no	yes
+1	server	yes	yes	yes
+- ai_spend gains funded_by TEXT NOT NULL DEFAULT 'codementor' ('user' for BYOK); user-funded rows excluded from the L5 daily cap and user-token budget.
+- Credits still claim on tier 0 own-key requests, per your answer.
+7. Extension
+- Account/settings card: provider select, API key input, save/remove, masked hint display.
+- Usage card shows "Unlimited with your key" (tier 1 + key) vs "12 runs / 5h" (tier 0).
+- planTier and aiKey flow through the existing client/state.
+8. Tests
+- Backend: migration/repo defaults; /me shape; encrypt/decrypt round-trip; no plaintext leak; auth on key endpoints; tier-0 own-key still burns credits; tier-1 own-key skips claim/budgets; tier-1 server-key still metered; gateway no fallback on bad own key; spend attribution.
+- Extension: settings save/remove, tier badge; E2E fake API stubs for /account/ai-key.
+- Verify: pytest, npm test, npm run compile, npm run test:e2e, Ruff.
+Assumptions to confirm: single own key per user; manual tier upgrade; tier-1 without own key stays metered; tier-0 own-key skips our cost guards but keeps credits + rate limits; ciphertext never leaves the server.
