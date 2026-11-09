@@ -192,3 +192,52 @@ class TestReturnOriginAllowlistIsNeverEmpty:
         for name in (".env.example", "docker-compose.yml", "render.yaml"):
             text = (backend_root / name).read_text(encoding="utf-8")
             assert "chrome-extension://invalid" not in text, name
+
+class TestExternalHandoffToTheExtension:
+    """The done page also messages the extension directly.
+
+    Watching the tab is best-effort: MV3 can deliver a navigation to a worker
+    that is only just waking, and a state scan only helps while the tab is
+    still open. An ``externally_connectable`` message from the done page is
+    delivered to the extension by Chrome itself, so it does not depend on the
+    worker having observed anything.
+    """
+
+    EXT = "ncbohgigmifjgekpfeebkognlogpflfa"
+    CODE = "ZSyFiRJIabcdefghij"
+
+    def _body(self, **kwargs: object) -> str:
+        import asyncio
+
+        from app.api.routers.auth import extension_done
+
+        response = asyncio.run(extension_done(**kwargs))  # type: ignore[arg-type]
+        assert response.status_code == 200
+        return response.body.decode("utf-8")
+
+    def test_extension_id_is_extracted_from_a_validated_origin(self) -> None:
+        from app.api.routers.auth import _extension_id
+
+        assert _extension_id(f"chrome-extension://{self.EXT}/") == self.EXT
+
+    def test_non_extension_and_malformed_ids_are_ignored(self) -> None:
+        from app.api.routers.auth import _extension_id
+
+        assert _extension_id("https://app.codementor.example") is None
+        assert _extension_id("chrome-extension://not-an-id/") is None
+        assert _extension_id("chrome-extension://zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz/") is None
+
+    def test_done_page_hands_the_code_to_a_known_extension(self) -> None:
+        body = self._body(code=self.CODE, ext=self.EXT)
+        assert self.EXT in body
+        assert "chrome.runtime.sendMessage" in body
+        assert "chrome-extension://" not in body
+
+    def test_handoff_is_omitted_without_a_valid_extension_id(self) -> None:
+        body = self._body(code=self.CODE, ext="not-an-id")
+        assert "sendMessage" not in body
+
+    def test_handoff_is_omitted_for_a_code_outside_the_token_alphabet(self) -> None:
+        body = self._body(code="<script>alert(1)</script>", ext=self.EXT)
+        assert "sendMessage" not in body
+        assert "<script>alert" not in body

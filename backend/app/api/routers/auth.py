@@ -19,6 +19,8 @@ sign-in link.
 
 from __future__ import annotations
 
+import json
+import re
 import secrets
 from typing import Annotated, Any
 from urllib.parse import urlencode, urlparse
@@ -183,6 +185,22 @@ def _public_base_url(request: Request, auth: AuthConfig) -> str:
     return f"{scheme}://{callback.netloc}"
 
 
+_EXTENSION_ID_RE = re.compile(r"^[a-p]{32}$")
+_LOGIN_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{8,200}$")
+
+
+def _extension_id(return_to: str) -> str | None:
+    """The Chrome extension id from an already-validated ``return_to``.
+
+    Chrome ids are 32 characters in ``a``-``p``. Returning ``None`` rather than
+    a malformed string keeps it out of the page's inline script.
+    """
+    parsed = urlparse(return_to)
+    if parsed.scheme != "chrome-extension":
+        return None
+    return parsed.netloc if _EXTENSION_ID_RE.match(parsed.netloc) else None
+
+
 @router.get("/extension/login", response_class=HTMLResponse)
 async def extension_login_page(
     container: ContainerDep,
@@ -284,25 +302,45 @@ async def github_callback(
     #
     # A web page redirecting to chrome-extension:// is refused by Chrome with
     # ERR_BLOCKED_BY_CLIENT, so a flow that returns to the extension by
-    # navigating there can never work. The extension watches this tab instead,
-    # which needs no browser permission to observe.
+    # navigating there can never work. The extension watches this tab and the
+    # page also messages it directly through `externally_connectable`.
     base = _public_base_url(request, auth)
-    location = f"{base}{API_PREFIX}/auth/extension/done?{urlencode({'code': raw_code})}"
+    params: dict[str, str] = {"code": raw_code}
+    ext = _extension_id(target)
+    if ext:
+        params["ext"] = ext
+    location = f"{base}{API_PREFIX}/auth/extension/done?{urlencode(params)}"
     return RedirectResponse(location, status_code=303)
 
 
 @router.get("/extension/done", response_class=HTMLResponse)
-async def extension_done(code: Annotated[str, Query(max_length=200)]) -> HTMLResponse:
+async def extension_done(
+    code: Annotated[str, Query(max_length=200)],
+    ext: Annotated[str | None, Query(max_length=64)] = None,
+) -> HTMLResponse:
     """Where the sign-in flow ends.
 
-    Deliberately inert: it carries the code in its URL, confirms it, and lets
-    the extension read the URL out of the tab. Nothing here needs to call back
-    into the extension, which is exactly what the old redirect required and
-    exactly what Chrome forbids.
+    It carries the code in its URL, confirms it, and hands it to the extension
+    two ways: the extension watches this tab, and when the page knows the
+    extension id it also sends an external message. The message path works even
+    if the navigation event is delivered to a worker that was asleep.
     """
     from html import escape
 
     safe = escape(code[:8], quote=True)
+    handoff = ""
+    if (
+        ext
+        and _EXTENSION_ID_RE.match(ext)
+        and _LOGIN_CODE_RE.match(code)
+    ):
+        handoff = (
+            "<script>(function(){"
+            f"var ext={json.dumps(ext)},code={json.dumps(code)};"
+            "try{if(window.chrome&&chrome.runtime&&chrome.runtime.sendMessage){"
+            "chrome.runtime.sendMessage(ext,{t:'auth.code',code:code},"
+            "function(){void chrome.runtime.lastError;});}}catch(e){}})();</script>"
+        )
     return HTMLResponse(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<title>Signed in</title>"
@@ -312,7 +350,8 @@ async def extension_done(code: Annotated[str, Query(max_length=200)]) -> HTMLRes
         "<h1>You are signed in</h1>"
         f"<p>Code {safe}&hellip; handed back to CodeMentor.</p>"
         "<p>You can close this tab.</p>"
-        "</div></body></html>"
+        "</div>"
+        f"{handoff}</body></html>"
     )
 
 

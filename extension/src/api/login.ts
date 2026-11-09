@@ -33,7 +33,10 @@ async function exchangeCode(code: string): Promise<AuthTokens> {
     body: JSON.stringify({ code }),
   });
   if (!res.ok) {
-    throw new ApiFailure("unauthorized", "That sign-in link has expired. Try again.");
+    throw new ApiFailure(
+      "unauthorized",
+      `Sign-in exchange failed (HTTP ${res.status}). Try again.`,
+    );
   }
   const body = (await res.json()) as {
     access_token: string;
@@ -115,6 +118,18 @@ export async function completeHostedLogin(url: string): Promise<boolean> {
   if (!isDoneUrl(url)) return false;
   const code = pickCode(url);
   if (!code) return false;
+  return completeWithCode(code);
+}
+
+/**
+ * Exchange a code the backend handed over directly.
+ *
+ * Called from `chrome.runtime.onMessageExternal` on the done page. That path
+ * does not depend on the tab navigation being observed at all, which makes it
+ * the reliable one when the worker was asleep.
+ */
+export async function completeWithCode(code: string): Promise<boolean> {
+  if (!/^[A-Za-z0-9_-]{8,200}$/.test(code)) return false;
   if (exchangingCode === code) return true;
 
   exchangingCode = code;
@@ -122,10 +137,46 @@ export async function completeHostedLogin(url: string): Promise<boolean> {
     if ((await handledCodeStore.getValue()) === code) return true;
     await setTokens(await exchangeCode(code));
     await handledCodeStore.setValue(code);
+    console.info("[codementor:auth] sign-in code exchanged");
     return true;
   } finally {
     exchangingCode = null;
   }
+}
+
+/** Codes this worker already tried, so a stale tab is not retried every tick. */
+const attemptedCodes = new Set<string>();
+
+/**
+ * Find a finished sign-in tab the tab listener may have missed.
+ *
+ * The listener is the primary path, but MV3 can deliver a navigation to a
+ * worker that has just been revived after the event was queued, and the popup
+ * may be reopened after the done tab was already sitting there. Scanning open
+ * tabs needs no extra permission because the backend origin is in
+ * `host_permissions`.
+ */
+export async function recoverHostedLogin(): Promise<boolean> {
+  let tabs: chrome.tabs.Tab[];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch {
+    return false;
+  }
+
+  for (const tab of tabs) {
+    const url = tab.url;
+    if (!url || !isDoneUrl(url)) continue;
+    const code = pickCode(url);
+    if (!code || attemptedCodes.has(code)) continue;
+    attemptedCodes.add(code);
+    try {
+      if (await completeHostedLogin(url)) return true;
+    } catch (cause) {
+      console.warn("[codementor:auth] sign-in exchange rejected", cause);
+    }
+  }
+  return false;
 }
 
 async function hostedFlow(): Promise<AuthState> {
@@ -147,7 +198,10 @@ async function hostedFlow(): Promise<AuthState> {
       signedIn = true;
       break;
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // Fallback for a missed tab event: browser calls also keep this worker
+    // alive while we wait.
+    await recoverHostedLogin();
+    await new Promise((resolve) => setTimeout(resolve, 750));
   }
 
   await chrome.tabs.remove(tabId).catch(() => undefined);
@@ -177,7 +231,13 @@ export async function logout(): Promise<void> {
 
 /** Server-backed auth truth, with the last profile as an offline fallback. */
 export async function authState(): Promise<AuthState> {
-  const { accessToken } = await getTokens();
+  let { accessToken } = await getTokens();
+  if (!accessToken) {
+    // A completed sign-in tab may still be open from a flow whose exchange
+    // never ran (worker asleep, listener missed, popup closed).
+    await recoverHostedLogin();
+    ({ accessToken } = await getTokens());
+  }
   if (!accessToken) return { signedIn: false, email: null, emailVerified: false };
 
   try {

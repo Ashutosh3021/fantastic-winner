@@ -75,6 +75,11 @@ export default defineConfig({
 
     host_permissions: ["https://leetcode.com/*", `${API_BASE_URL}/*`],
 
+    // The sign-in page on the backend origin hands the one-time code straight to
+    // the service worker. This is the path that does not rely on observing a tab
+    // navigation, and it is restricted to our own backend.
+    externally_connectable: { matches: [`${API_BASE_URL}/*`] },
+
     web_accessible_resources: [
       {
         resources: ["fonts/*"],
