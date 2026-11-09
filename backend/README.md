@@ -39,9 +39,30 @@ the value the code actually defaults to. Only three matter to start:
 |---|---|
 | `PYRONITES_URL` | Base URL of the PyroCore instance |
 | `PYRONITES_KEY` | API key, scoped to one project |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth app used for sign-in |
 | `AI_ANTHROPIC_KEY` / `AI_OPENAI_KEY` / `AI_GEMINI_KEY` | At least one, in production |
 
 List variables are comma separated: `EXTENSION_RETURN_ORIGINS=chrome-extension://abc,https://app.example`.
+
+### Sign-in is GitHub OAuth
+
+There is no email/password form. Create an OAuth app at
+<https://github.com/settings/developers> and register the callback URL:
+
+```
+http://localhost:8080/v1/auth/extension/github/callback          # local stack
+https://<your-api-host>/v1/auth/extension/github/callback         # deployed
+```
+
+Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. The callback is derived from
+the request base URL unless `GITHUB_OAUTH_REDIRECT_URL` is set. The flow is:
+extension tab → hosted page → GitHub consent → backend callback → one-time code
+→ extension exchanges it for its own opaque token pair. Only `read:user` and
+`user:email` are requested, and the GitHub token never leaves the server.
+
+`AUTH_STATE_SECRET` optionally signs the OAuth `state`; it defaults to the
+client secret. No schema change is needed: OAuth accounts are stored in
+`cm_users.pyrocore_user_id` as `github:<id>`.
 
 ### Three settings that must differ in production
 

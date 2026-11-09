@@ -63,7 +63,7 @@ export function newIdempotencyKey(): string {
 }
 
 export const auth = {
-  login: (provider = "email"): Promise<Res<AuthState>> => send({ t: "auth.login", provider }),
+  login: (provider = "github"): Promise<Res<AuthState>> => send({ t: "auth.login", provider }),
   logout: (): Promise<Res<null>> => send({ t: "auth.logout" }),
   state: (): Promise<Res<AuthState>> => send({ t: "auth.state" }),
 };

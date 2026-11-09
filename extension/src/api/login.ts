@@ -11,14 +11,10 @@ import type { AuthState } from "../messaging";
 /**
  * Login.
  *
- * Two flows, selected at build time by `VITE_AUTH_FLOW`:
- *
- * - `hosted` — the popup opens the backend's login page. The backend returns
- *   to the extension page URL carrying a short-lived `code`; we exchange that
- *   code for tokens with no extra Chrome permission.
- * - `webext` — `chrome.identity.launchWebAuthFlow` against an OAuth provider.
- *   Only this flow needs the `identity` permission, which `wxt.config.ts`
- *   requests conditionally.
+ * Sign-in is GitHub OAuth, completed on the backend's hosted page. The popup
+ * opens that page; the backend owns the GitHub callback and returns to the
+ * extension page URL carrying a short-lived `code`, which we exchange for
+ * tokens with no extra Chrome permission.
  */
 
 const LOGIN_PATH = `${API_PREFIX}/auth/extension/login`;
@@ -95,7 +91,7 @@ let exchangingCode: string | null = null;
  * worker, not from the `auth.login` handler. That distinction is the whole fix:
  * opening the sign-in tab closes the popup, and MV3 suspends an idle worker after
  * about 30 seconds, so a listener registered inside the handler is gone long
- * before the learner has typed a password and submitted the form. The top-level
+ * before the learner has authorised the app on GitHub. The top-level
  * listener is re-registered on every worker revival, which is what a tab event
  * does, so the code still gets exchanged whenever the redirect lands.
  */
@@ -143,22 +139,9 @@ async function hostedFlow(): Promise<AuthState> {
   return { signedIn: true, email: null, emailVerified: true };
 }
 
-async function webExtFlow(): Promise<AuthState> {
-  const redirectUrl = CONFIG.oauthRedirectUrl;
-  const returnedUrl: string | undefined = await chrome.identity.launchWebAuthFlow({
-    url: loginUrl(redirectUrl),
-    interactive: true,
-  });
-  const code = returnedUrl ? pickCode(returnedUrl) : null;
-  if (!code) throw new ApiFailure("unauthorized", "Sign-in did not complete.");
-  await setTokens(await exchangeCode(code));
-  return { signedIn: true, email: null, emailVerified: true };
-}
-
 export async function login(provider: string): Promise<AuthState> {
-  const flow = CONFIG.authFlow === "webext" ? webExtFlow : hostedFlow;
   void provider; // Provider choice is made on the hosted page.
-  return flow();
+  return hostedFlow();
 }
 
 export async function logout(): Promise<void> {

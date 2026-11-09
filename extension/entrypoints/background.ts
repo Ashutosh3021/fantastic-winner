@@ -70,7 +70,7 @@ export default defineBackground(() => {
   // event wakes it and re-runs this module, and only top-level listeners are
   // registered in time to receive that event. Registering this inside the
   // `auth.login` handler (the old behavior) meant it was dead by the time the
-  // learner finished typing credentials, so the one-time code was never
+  // learner finished authorising on GitHub, so the one-time code was never
   // exchanged and the popup stayed signed out even though the sign-in page said
   // it had succeeded.
   chrome.tabs.onUpdated.addListener((_tabId, info) => {

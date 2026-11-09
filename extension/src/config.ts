@@ -13,11 +13,6 @@ function required(name: string, fallback: string): string {
 
 export const CONFIG = {
   apiBaseUrl: required("VITE_API_BASE_URL", "https://api.codementor.example"),
-  authFlow: required("VITE_AUTH_FLOW", "hosted"),
-  oauthRedirectUrl: required(
-    "VITE_OAUTH_REDIRECT_URL",
-    "https://api.codementor.example/auth/extension/callback",
-  ),
   /** §5.7: wall-clock ceiling for any single client request. */
   requestTimeoutMs: 45_000,
   /** §16.2: at most 2 attempts, ever. The second reuses the idempotency key. */

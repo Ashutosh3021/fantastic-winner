@@ -652,15 +652,6 @@ class AuthState(Base):
     email: str | None = None
     emailVerified: bool = False
 
-class CredentialsForm(BaseModel):
-    """HTML form post from the hosted login page."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    email: str = Field(min_length=3, max_length=320)
-    password: str = Field(min_length=8, max_length=256)
-    return_to: str = Field(default="", max_length=500)
-
 class CodeExchangeRequest(Base):
     code: str = Field(min_length=10, max_length=256)
 

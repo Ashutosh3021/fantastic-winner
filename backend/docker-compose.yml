@@ -52,6 +52,10 @@ services:
       PYRONITES_KEY: ${PYRONITES_KEY:?set PYRONITES_KEY in .env - see scripts/README-key-setup.md}
       AI_ANTHROPIC_KEY: ${AI_ANTHROPIC_KEY:-}
       AI_OPENAI_KEY: ${AI_OPENAI_KEY:-}
+      # GitHub OAuth app. Register http://localhost:8080/v1/auth/extension/github/callback
+      # on the app. Sign-in is disabled when these are empty.
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       EXTENSION_RETURN_ORIGINS: chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal
     ports:
       - "8080:8000"

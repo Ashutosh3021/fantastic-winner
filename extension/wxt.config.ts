@@ -48,12 +48,10 @@ if (process.env.NODE_ENV === "production" && API_BASE_URL === PLACEHOLDER_API_BA
 /**
  * Login flow for the Pyronites account system.
  *
- * - `hosted` — the backend serves the page and hands back a one-time code the
- *   popup exchanges for tokens. Requires no extra permission.
- * - `webext` — `chrome.identity.launchWebAuthFlow` against an OAuth provider.
- *   Requires the `identity` permission, so it is only requested when selected.
+ * The backend serves the sign-in page and hands back a one-time code the popup
+ * exchanges for tokens. That needs no extension permission, so none is
+ * requested for auth.
  */
-const AUTH_FLOW = (process.env.VITE_AUTH_FLOW ?? "hosted") as "hosted" | "webext";
 
 export default defineConfig({
   srcDir: ".",
@@ -73,10 +71,7 @@ export default defineConfig({
     // without a `_locales` subtree makes Chrome refuse to load the extension
     // ("Default locale was specified, but _locales subtree is missing").
 
-    permissions: [
-      "storage",
-      ...(AUTH_FLOW === "webext" ? (["identity"] as const) : []),
-    ],
+    permissions: ["storage"],
 
     host_permissions: ["https://leetcode.com/*", `${API_BASE_URL}/*`],
 

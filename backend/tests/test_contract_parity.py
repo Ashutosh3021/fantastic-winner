@@ -23,10 +23,11 @@ _PARAM_MAP = {"{id}": "{session_id}", "{k}": "{index}"}
 #: Routes the server adds that the extension does not call. Each needs a reason.
 _SERVER_ONLY = {
     ("GET", "/health"),
+    # Browser sign-in flow: the extension opens the page, the server redirects
+    # to GitHub and owns the callback. Neither is a client API route.
     ("GET", "/v1/auth/extension/login"),
-    ("POST", "/v1/auth/extension/login"),
-    ("GET", "/v1/auth/extension/signup"),
-    ("POST", "/v1/auth/extension/signup"),
+    ("GET", "/v1/auth/extension/github"),
+    ("GET", "/v1/auth/extension/github/callback"),
     ("POST", "/v1/auth/extension/code"),
     ("POST", "/v1/auth/refresh"),
     # The sign-in flow ends here rather than navigating to chrome-extension://,

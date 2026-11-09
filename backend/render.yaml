@@ -54,6 +54,19 @@ services:
         value: "false"
       - key: AUTH_AUTO_VERIFY_DEV
         value: "false"
+      # GitHub OAuth app. Register this callback on the app:
+      #   https://<service host>/v1/auth/extension/github/callback
+      # Sign-in is disabled until both are set.
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      # Optional fixed callback. Blank derives it from the request base URL.
+      - key: GITHUB_OAUTH_REDIRECT_URL
+        sync: false
+      # Optional HMAC key for the OAuth state; falls back to the client secret.
+      - key: AUTH_STATE_SECRET
+        sync: false
       - key: REQUIRE_VERIFIED_EMAIL_FOR_AI
         value: "true"
       # Comma separated. The extension origin is chrome-extension://<id>.

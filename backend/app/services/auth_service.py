@@ -1,19 +1,17 @@
 """Auth bridge (§18.1, ARCHITECTURE §27.3.4 resolved).
 
-PyroCore authenticates browsers with an **opaque session token in an httpOnly
-cookie**. A Chrome extension can receive neither: the cookie is not visible to
-`fetch` from a service worker on a different origin, and sending one back would
-mean a third origin holding it. So there is no token format to reuse and no
-flow to point at - the plan's `Authorization: Bearer <jwt>` is simply not what
-PyroCore offers.
+The extension authenticates with **GitHub OAuth**. PyroCore's browser auth is
+unusable here: it issues an httpOnly cookie, and a Chrome extension can receive
+neither the cookie nor a token on a foreign origin. There is also no password
+to collect any more, so the backend no longer proxies PyroCore's
+``/auth/login``; it owns the OAuth callback and the first-party account mirror.
 
 What exists instead:
 
-    extension tab -> hosted login page -> POST credentials
-      -> backend calls PyroCore /auth/login server-to-server, captures the cookie
-      -> backend calls PyroCore /auth/me to learn the identity
-      -> backend mints a one-time code, redirects the tab to chrome-extension://
-      -> extension exchanges the code for a short-lived access token + refresh token
+    extension tab -> hosted login page -> GitHub consent
+      -> backend exchanges the code server-to-server and reads the identity
+      -> backend mints a one-time code and redirects to ``/auth/extension/done``
+      -> extension exchanges the code for a short-lived access + refresh pair
 
 Tokens are opaque and stored **hashed**, so a datastore dump yields nothing
 usable. Access tokens are short-lived because the extension keeps them in
@@ -88,15 +86,27 @@ class AuthService:
 
     # -- login ---
 
-    async def sign_in(self, *, email: str, password: str, return_to: str) -> str:
-        """Exchange credentials for a one-time code. Returns the raw code."""
-        session = await self.gw.pyrocore_login(email.strip().lower(), password)
-        identity = await self.gw.pyrocore_me(session["session_token"])
+    async def sign_in_with_provider(
+        self,
+        *,
+        provider: str,
+        provider_user_id: str,
+        email: str,
+        email_verified: bool,
+        return_to: str,
+    ) -> str:
+        """Mirror an external identity and hand the extension a one-time code.
 
+        ``cm_users.pyrocore_user_id`` is the stable external-identity column; it
+        holds ``<provider>:<id>`` for OAuth accounts. Matching by email as well
+        means an account created before the provider switch is linked instead of
+        duplicated. A verified provider email satisfies the verified-email gate
+        (-16.7) without a second confirmation loop.
+        """
         user, _created = await self.users.ensure(
-            pyrocore_user_id=identity["id"],
-            email=identity["email"],
-            auto_verify=self.config.auto_verify_dev,
+            pyrocore_user_id=f"{provider}:{provider_user_id}",
+            email=email.strip().lower(),
+            auto_verify=email_verified or self.config.auto_verify_dev,
         )
 
         raw_code = secrets.token_urlsafe(32)
@@ -107,24 +117,6 @@ class AuthService:
             ttl_s=self.config.login_code_ttl_s,
         )
         logger.info("issued login code for user_hash=%s", user["id"][:8])
-        return raw_code
-
-    async def sign_up(self, *, email: str, password: str, return_to: str) -> str:
-        session = await self.gw.pyrocore_signup(email.strip().lower(), password)
-        identity = await self.gw.pyrocore_me(session["session_token"])
-
-        user, _created = await self.users.ensure(
-            pyrocore_user_id=identity["id"],
-            email=identity["email"],
-            auto_verify=self.config.auto_verify_dev,
-        )
-        raw_code = secrets.token_urlsafe(32)
-        await self.codes.issue(
-            user_id=str(user["id"]),
-            raw=raw_code,
-            return_to=return_to,
-            ttl_s=self.config.login_code_ttl_s,
-        )
         return raw_code
 
     async def exchange_code(self, raw_code: str) -> dict[str, Any]:

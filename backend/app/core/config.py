@@ -127,6 +127,28 @@ class AuthConfig:
     #: link to whoever crafted the URL.
     allowed_return_origins: tuple[str, ...] = ("chrome-extension://localhost",)
 
+    # --- GitHub OAuth (-18.1) ---
+    #: Credentials of the GitHub OAuth app. Sign-in is disabled when either is
+    #: empty; the hosted page says so instead of rendering a dead button.
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    #: Optional fixed callback. Empty derives it from the request base URL,
+    #: which is correct on Render/Fly and in local dev. The value must match
+    #: the callback registered on the GitHub OAuth app exactly.
+    github_redirect_url: str = ""
+    github_oauth_scopes: str = "read:user user:email"
+    #: HMAC key for the OAuth ``state``. Falls back to the client secret, so a
+    #: deployment with only the GitHub app credentials still works.
+    oauth_state_secret: str = ""
+
+    @property
+    def github_configured(self) -> bool:
+        return bool(self.github_client_id and self.github_client_secret)
+
+    @property
+    def state_secret(self) -> str:
+        return self.oauth_state_secret or self.github_client_secret
+
 @dataclass(frozen=True)
 class CreditConfig:
     credits_per_window: int = 12
@@ -342,6 +364,11 @@ def get_settings() -> Settings:
             allowed_return_origins=_env_list(
                 "EXTENSION_RETURN_ORIGINS", (EXTENSION_ORIGIN,)
             ),
+            github_client_id=_env("GITHUB_CLIENT_ID"),
+            github_client_secret=_env("GITHUB_CLIENT_SECRET"),
+            github_redirect_url=_env("GITHUB_OAUTH_REDIRECT_URL"),
+            github_oauth_scopes=_env("GITHUB_OAUTH_SCOPES", "read:user user:email"),
+            oauth_state_secret=_env("AUTH_STATE_SECRET"),
         ),
         credits=CreditConfig(
             credits_per_window=_env_int("CREDITS_PER_WINDOW", 12),

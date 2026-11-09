@@ -264,7 +264,7 @@ export function Popup() {
                     }}
                   >
                     <AppIcon icon={Login01Icon} size={16} />
-                    Sign in
+                    Continue with GitHub
                   </Button>
                 </div>
               </CardContent>

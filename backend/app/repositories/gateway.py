@@ -333,68 +333,6 @@ class PyronitesGateway:
     async def query_all(self, sql: str) -> list[dict[str, Any]]:
         return (await self.execute([sql])).all()
 
-    # -- PyroCore auth plane (server-to-server) ---
-
-    async def pyrocore_login(self, email: str, password: str) -> dict[str, Any]:
-        """Exchange credentials for a PyroCore session cookie.
-
-        This runs **server to server** on purpose. PyroCore authenticates
-        browsers with an httpOnly cookie, which a Chrome extension cannot
-        receive, hold, or send back with the right origin. The backend does the
-        cookie dance here and hands the extension its own short-lived token
-        instead (§18.1).
-        """
-        response = await self._client.post(
-            f"{self._settings.pyronites.url}/auth/login",
-            json={"email": email, "password": password},
-        )
-        if response.status_code == 401:
-            raise BadRequest("Incorrect email or password")
-        if response.status_code == 409:
-            raise BadRequest("An account with that email already exists")
-        if not response.is_success:
-            logger.warning("pyronites login -> %s", response.status_code)
-            raise UpstreamError("Account service is unavailable")
-
-        token = response.cookies.get("session_token")
-        if not token:
-            raise UpstreamError("Account service did not return a session")
-        return {"session_token": token, "email": email}
-
-    async def pyrocore_me(self, session_token: str) -> dict[str, Any]:
-        response = await self._client.get(
-            f"{self._settings.pyronites.url}/auth/me",
-            cookies={"session_token": session_token},
-        )
-        if response.status_code in (401, 403):
-            raise UpstreamError("Account service rejected the session")
-        if not response.is_success:
-            raise UpstreamError("Account service is unavailable")
-        payload = response.json()
-        user_id = payload.get("id")
-        email = payload.get("email")
-        if not user_id or not email:
-            raise UpstreamError("Account service returned an unexpected identity")
-        return {"id": str(user_id), "email": str(email)}
-
-    async def pyrocore_signup(self, email: str, password: str) -> dict[str, Any]:
-        response = await self._client.post(
-            f"{self._settings.pyronites.url}/auth/signup",
-            json={"email": email, "password": password},
-        )
-        if response.status_code == 409:
-            raise BadRequest("An account with that email already exists")
-        if response.status_code == 400:
-            raise BadRequest("That email or password is not acceptable")
-        if not response.is_success:
-            logger.warning("pyronites signup -> %s", response.status_code)
-            raise UpstreamError("Account service is unavailable")
-
-        token = response.cookies.get("session_token")
-        if not token:
-            raise UpstreamError("Account service did not return a session")
-        return {"session_token": token, "email": email}
-
     # -- health ---
 
     async def health(self) -> dict[str, Any]:
