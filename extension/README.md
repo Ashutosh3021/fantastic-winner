@@ -55,10 +55,12 @@ cp backend/.env.example backend/.env       # PYRONITES_KEY + one AI provider key
 
 ### Sign-in from an unpacked build
 
-The backend allowlist compares **exact** extension origins. An unpacked build
-gets a different runtime ID from the shipped one (`pmkgnbafanjpmmhphckgglhnpajpepal`),
-so sign-in fails with "That sign-in link is not valid" until the dev ID is
-allowed:
+The backend allowlist compares **exact** extension origins. The build pins a
+manifest `key`, so an unpacked build loads with the same ID as the packaged CRX
+(`ncbohgigmifjgekpfeebkognlogpflfa`) and that ID is already allowed by default.
+If Chrome ever reports a different ID (for example a source build with the key
+removed), sign-in fails with "That sign-in link is not valid" until the dev ID
+is allowed:
 
 1. Load the unpacked build via `chrome://extensions`.
 2. Copy its ID from the extension card.

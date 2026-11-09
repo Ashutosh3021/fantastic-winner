@@ -166,6 +166,23 @@ def _github_callback_url(request: Request, auth: AuthConfig) -> str:
     return f"{str(request.base_url).rstrip('/')}{API_PREFIX}/auth/extension/github/callback"
 
 
+def _public_base_url(request: Request, auth: AuthConfig) -> str:
+    """Origin for the redirect that ends sign-in.
+
+    TLS terminates at the proxy, and uvicorn ignores ``X-Forwarded-Proto``
+    unless the proxy's address is trusted. Left alone, ``request.base_url`` is
+    therefore ``http://`` on Render while the extension watches ``https://``,
+    and the one-time code is never exchanged.
+    """
+    callback = urlparse(_github_callback_url(request, auth))
+    scheme = callback.scheme or "https"
+    if not auth.github_redirect_url:
+        forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+        if forwarded in {"http", "https"}:
+            scheme = forwarded
+    return f"{scheme}://{callback.netloc}"
+
+
 @router.get("/extension/login", response_class=HTMLResponse)
 async def extension_login_page(
     container: ContainerDep,
@@ -269,7 +286,7 @@ async def github_callback(
     # ERR_BLOCKED_BY_CLIENT, so a flow that returns to the extension by
     # navigating there can never work. The extension watches this tab instead,
     # which needs no browser permission to observe.
-    base = str(request.base_url).rstrip("/")
+    base = _public_base_url(request, auth)
     location = f"{base}{API_PREFIX}/auth/extension/done?{urlencode({'code': raw_code})}"
     return RedirectResponse(location, status_code=303)
 

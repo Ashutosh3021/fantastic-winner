@@ -326,7 +326,7 @@ class Settings:
 # : signing key and anyone can read it off the installed extension. It is the
 # : one value that must appear in both CORS and the sign-in return allowlist, so
 # : it is defined once here rather than copy-pasted into four config files.
-EXTENSION_ORIGIN = "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
+EXTENSION_ORIGIN = "chrome-extension://ncbohgigmifjgekpfeebkognlogpflfa"
 
 
 @lru_cache(maxsize=1)

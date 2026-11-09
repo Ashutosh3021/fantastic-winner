@@ -114,7 +114,7 @@ class TestReturnOriginAllowlistIsNeverEmpty:
     def test_default_allowlist_contains_the_shipped_extension(self) -> None:
         from app.core.config import EXTENSION_ORIGIN
 
-        assert EXTENSION_ORIGIN == "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal"
+        assert EXTENSION_ORIGIN == "chrome-extension://ncbohgigmifjgekpfeebkognlogpflfa"
 
     def test_shipped_origin_actually_passes_the_guard(self) -> None:
         # Ties the config default to the validator, so a typo in the constant
@@ -151,7 +151,7 @@ class TestReturnOriginAllowlistIsNeverEmpty:
         get_settings.cache_clear()
         try:
             assert get_settings().auth.allowed_return_origins == (
-                "chrome-extension://pmkgnbafanjpmmhphckgglhnpajpepal",
+                "chrome-extension://ncbohgigmifjgekpfeebkognlogpflfa",
             )
         finally:
             get_settings.cache_clear()

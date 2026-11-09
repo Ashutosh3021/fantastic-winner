@@ -61,7 +61,23 @@ function pickCode(returnedUrl: string): string | null {
 }
 
 const DONE_PATH = `${API_PREFIX}/auth/extension/done`;
-const DONE_PREFIX = `${CONFIG.apiBaseUrl}${DONE_PATH}`;
+const DONE_URL = new URL(CONFIG.apiBaseUrl + DONE_PATH);
+
+/**
+ * Is this the hosted done page?
+ *
+ * Compared by host and path rather than by string prefix: behind a TLS-
+ * terminating proxy the server can still report an `http://` origin, and a
+ * mismatch there means the one-time code is never exchanged.
+ */
+function isDoneUrl(candidate: string): boolean {
+  try {
+    const url = new URL(candidate);
+    return url.host === DONE_URL.host && url.pathname === DONE_URL.pathname;
+  } catch {
+    return false;
+  }
+}
 
 /** Last `/me` profile, used only when the network cannot answer. */
 const authProfileStore = storage.defineItem<AuthState | null>("local:auth:profile", {
@@ -96,7 +112,7 @@ let exchangingCode: string | null = null;
  * does, so the code still gets exchanged whenever the redirect lands.
  */
 export async function completeHostedLogin(url: string): Promise<boolean> {
-  if (!url.startsWith(DONE_PREFIX)) return false;
+  if (!isDoneUrl(url)) return false;
   const code = pickCode(url);
   if (!code) return false;
   if (exchangingCode === code) return true;

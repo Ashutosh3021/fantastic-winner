@@ -207,9 +207,18 @@ class UserAICredentialRepository(BaseRepository):
 class PreferencesRepository(BaseRepository):
     table = "user_preferences"
 
+    async def _find(self, user_id: str) -> dict[str, Any] | None:
+        """Read by filter, never by row id.
+
+        This table is keyed by ``user_id``; PyroCore's row endpoints assume an
+        ``id`` column, so a GET/PATCH on the primary key can answer 500 - even
+        for a row that does not exist yet, which used to abort first sign-in.
+        """
+        rows = await self.where(column="user_id", value=user_id, limit=1)
+        return rows[0] if rows else None
+
     async def ensure(self, user_id: str) -> None:
-        existing = await self.get(user_id)
-        if existing:
+        if await self._find(user_id):
             return
         try:
             await self.gw.insert_row(
@@ -230,7 +239,7 @@ class PreferencesRepository(BaseRepository):
 
     async def for_user(self, user_id: str) -> dict[str, Any]:
         await self.ensure(user_id)
-        found = await self.get(user_id)
+        found = await self._find(user_id)
         if found is None:
             raise NotFound("preferences not found")
         return found
@@ -240,8 +249,18 @@ class PreferencesRepository(BaseRepository):
         merged = {**current, **{k: v for k, v in patch.items() if v is not None}}
         merged["prefs_version"] = int(current.get("prefs_version", 1)) + 1
         merged["updated_at"] = now_iso()
-        updated = await self.gw.update_row(self.table, user_id, merged)
-        return _row(updated) if updated else merged
+        assignments = ", ".join(
+            f"{safe_identifier(key)} = {encode(value)}"
+            for key, value in merged.items()
+            if key != "user_id"
+        )
+        await self.gw.execute(
+            [
+                f"UPDATE {safe_identifier(self.table)} SET {assignments} "
+                f"WHERE user_id = {encode(user_id)}"
+            ]
+        )
+        return merged
 
 # -- sessions ---
 
@@ -479,15 +498,23 @@ class LoginCodeRepository(BaseRepository):
         )
 
     async def consume(self, raw: str) -> dict[str, Any] | None:
-        rows = await self.where(column="code_hash", value=self.hash_code(raw), limit=2)
+        code_hash = self.hash_code(raw)
+        rows = await self.where(column="code_hash", value=code_hash, limit=2)
         for row in rows:
             if row.get("consumed_at"):
                 continue
             if str(row.get("expires_at", "")) <= now_iso():
                 continue
-            # Marking it consumed is what makes the code single-use.
-            await self.update(str(row["code_hash"]), {"consumed_at": now_iso()})
-            return row
+            # Conditional UPDATE keeps the code single-use without trusting a
+            # PATCH against this table's non-`id` primary key.
+            batch = await self.gw.execute(
+                [
+                    f"UPDATE {safe_identifier(self.table)} "
+                    f"SET consumed_at = {encode(now_iso())} "
+                    f"WHERE code_hash = {encode(code_hash)} AND consumed_at IS NULL"
+                ]
+            )
+            return row if batch.changes() == 1 else None
         return None
 
 # -- spend and events ---
