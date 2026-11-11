@@ -24,6 +24,7 @@ export const ERROR_CODES = [
   "not_found",
   "network_error",
   "timeout",
+  "context_invalidated",
   "invalid_response",
   "unknown",
 ] as const;

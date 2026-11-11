@@ -125,9 +125,19 @@ type LearnerState = {
   reset: () => void;
 };
 
+/** Chrome's message after an extension reload; not a CodeMentor error. */
+const CONTEXT_INVALIDATED = /extension context invalidated/i;
+
 function toApiError(cause: unknown): ApiError {
   if (cause instanceof ApiFailure) return cause.toApiError();
-  return { code: "unknown", message: cause instanceof Error ? cause.message : "Something went wrong." };
+  const message = cause instanceof Error ? cause.message : "Something went wrong.";
+  if (CONTEXT_INVALIDATED.test(message)) {
+    return {
+      code: "context_invalidated",
+      message: "CodeMentor was updated. Reload this page to reconnect.",
+    };
+  }
+  return { code: "unknown", message };
 }
 
 function applyUsageMeta(creditsRemaining?: number, creditsResetAt?: string): void {

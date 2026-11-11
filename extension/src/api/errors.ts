@@ -81,6 +81,8 @@ export function fallbackMessage(code: ErrorCode): string {
       return "CodeMentor could not reach the server.";
     case "timeout":
       return "That took too long. Check your connection and try again.";
+    case "context_invalidated":
+      return "CodeMentor was updated. Reload this page to reconnect.";
     case "invalid_response":
       return "The server sent something CodeMentor could not read.";
     case "unauthorized":

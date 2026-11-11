@@ -28,6 +28,7 @@ export function ErrorCard({
   const language = useLearnerStore((s) => s.language);
   const t = strings(language);
   const offline = error.code === "network_error" || error.code === "timeout";
+  const updated = error.code === "context_invalidated";
 
   const body =
     error.code === "ip_budget"
@@ -43,7 +44,11 @@ export function ErrorCard({
           ) : (
             <AppIcon icon={Alert01Icon} size={16} />
           )}
-          {offline ? t.networkErrorBody : "Something interrupted that"}
+          {offline
+            ? t.networkErrorBody
+            : updated
+              ? "CodeMentor was updated"
+              : "Something interrupted that"}
         </CardTitle>
         <p className="font-mono text-[11px] text-muted-foreground/80">{error.code}</p>
       </CardHeader>
@@ -52,6 +57,15 @@ export function ErrorCard({
         <p className="text-sm leading-relaxed">{body}</p>
 
         {offline && <Notice tone="info">{t.offlineBody}</Notice>}
+
+        {updated && (
+          <div className="pt-1">
+            <Button size="sm" onClick={() => window.location.reload()}>
+              <AppIcon icon={RefreshIcon} size={14} />
+              Reload page
+            </Button>
+          </div>
+        )}
 
         {error.code === "credits_exhausted" && (
           <Notice tone="warning">{t.creditsExhaustedBody}</Notice>
@@ -69,7 +83,7 @@ export function ErrorCard({
 
         {children}
 
-        {onRetry && (
+        {onRetry && !updated && (
           <div className="pt-1">
             <Button variant="outline" size="sm" onClick={onRetry}>
               <AppIcon icon={RefreshIcon} size={14} />

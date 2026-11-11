@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 
 import {
@@ -531,25 +531,31 @@ function AiKeySection({
   const [provider, setProvider] = useState<AIProvider>("openai");
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
+  // `saving` only disables the button after the next render, so a fast double
+  // click can enter `save` twice. The ref is set synchronously and is the real
+  // lock; the state only drives the label.
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (aiKey) setProvider(aiKey.provider);
   }, [aiKey]);
 
   async function save() {
-    const trimmed = key.trim();
-    if (trimmed.length < 8) {
-      toast("Paste a complete API key first.");
-      return;
-    }
-    // Guard: you must be signed in to associate a key with your account.
-    const state = await auth.state();
-    if (!state.ok || !state.data.signedIn) {
-      toast("Sign in before saving an API key.");
-      return;
-    }
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
+      const trimmed = key.trim();
+      if (trimmed.length < 8) {
+        toast("Paste a complete API key first.");
+        return;
+      }
+      // Guard: you must be signed in to associate a key with your account.
+      const state = await auth.state();
+      if (!state.ok || !state.data.signedIn) {
+        toast("Sign in before saving an API key.");
+        return;
+      }
       const res = await api("aiKeyPut", { body: { provider, api_key: trimmed } });
       onChange(res.data);
       setKey("");
@@ -566,11 +572,14 @@ function AiKeySection({
       );
       toast(code === "unauthorized" ? "Sign in expired. Sign in again." : message);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   async function remove() {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       await api("aiKeyDelete", {});
@@ -579,6 +588,7 @@ function AiKeySection({
     } catch {
       toast("Could not remove that key.");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }

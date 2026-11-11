@@ -213,7 +213,14 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["ops"])
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "database": bool(get_settings().pyronites.configured)}
+        settings = get_settings()
+        return {
+            "status": "ok",
+            "database": bool(settings.pyronites.configured),
+            # Whether /account/ai-key can work at all. False here explains a
+            # byok_unavailable error without reading the deployment's secrets.
+            "byok": bool(settings.byok.configured),
+        }
 
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(account.router, prefix=API_PREFIX)

@@ -24,8 +24,23 @@ export type ClientResult<T> = {
   meta: Extract<Res<T>, { ok: true }>["meta"];
 };
 
+/** Chrome throws this from every `chrome.*` call after an extension reload. */
+const CONTEXT_INVALIDATED = /extension context invalidated/i;
+
 async function send<M extends Msg>(msg: M): Promise<ResFor<M>> {
-  const res = (await chrome.runtime.sendMessage(msg)) as ResFor<M> | undefined;
+  let res: ResFor<M> | undefined;
+  try {
+    res = (await chrome.runtime.sendMessage(msg)) as ResFor<M> | undefined;
+  } catch (cause) {
+    if (cause instanceof Error && CONTEXT_INVALIDATED.test(cause.message)) {
+      // Not a CodeMentor failure: the page outlived the extension that owns it.
+      throw new ApiFailure(
+        "context_invalidated",
+        "CodeMentor was updated. Reload this page to reconnect.",
+      );
+    }
+    throw cause;
+  }
   if (!res) {
     throw new ApiFailure("unknown", "CodeMentor stopped responding. Reload the page.");
   }
@@ -69,5 +84,11 @@ export const auth = {
 };
 
 export function log(level: "info" | "warn" | "error", msg: string): void {
-  void chrome.runtime.sendMessage({ t: "log", level, msg });
+  try {
+    void Promise.resolve(chrome.runtime.sendMessage({ t: "log", level, msg })).catch(
+      () => undefined,
+    );
+  } catch {
+    // The extension was reloaded under this page; there is no one to log to.
+  }
 }
