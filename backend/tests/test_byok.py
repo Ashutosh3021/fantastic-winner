@@ -211,6 +211,11 @@ class _RecordingProvider:
         raise ProviderError("openai: HTTP 401", retryable=False, status=401)
 
 
+class _MissingModelProvider(_RecordingProvider):
+    async def generate_json(self, **_: Any) -> Any:
+        raise ProviderError("gemini: HTTP 404", retryable=False, status=404)
+
+
 class TestOwnKeyRouting:
     async def test_own_key_does_not_fall_back_to_the_server_key(
         self, monkeypatch: pytest.MonkeyPatch
@@ -249,6 +254,20 @@ class TestOwnKeyRouting:
 
         assert "rejected your API key" in str(raised.value)
         assert raised.value.status == 422
+        await gateway.aclose()
+
+    async def test_retired_model_names_the_model_not_the_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "app.ai.gateway._PROVIDER_CLASSES", {"openai": _MissingModelProvider}
+        )
+        gateway = AIGateway(_settings())
+
+        with pytest.raises(AiKeyRejected) as raised:
+            await gateway.run(_spec(), api_key=USER_KEY, provider="openai")
+
+        assert "no such model" in str(raised.value)
         await gateway.aclose()
 
     async def test_context_key_is_used_when_no_argument_is_passed(

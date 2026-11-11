@@ -50,7 +50,7 @@ export function ErrorCard({
             : updated
               ? "CodeMentor was updated"
               : keyRejected
-                ? "Your provider key was rejected"
+                ? "Your AI provider rejected the request"
                 : "Something interrupted that"}
         </CardTitle>
         <p className="font-mono text-[11px] text-muted-foreground/80">{error.code}</p>
@@ -63,7 +63,7 @@ export function ErrorCard({
 
         {keyRejected && (
           <Notice tone="warning">
-            Open the CodeMentor popup and check that the key matches the selected provider.
+            Check the key in the CodeMentor popup and that it matches the selected provider.
           </Notice>
         )}
 

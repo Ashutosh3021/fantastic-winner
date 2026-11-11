@@ -463,8 +463,8 @@ class AIGateway:
                 )
             if status == 404:
                 raise AiKeyRejected(
-                    "The provider did not recognize the request. Check that the key "
-                    "belongs to the selected provider."
+                    "The provider has no such model for this key. The configured "
+                    "model may have been retired or is not offered to new keys."
                 )
             if status == 400:
                 raise AiKeyRejected(

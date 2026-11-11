@@ -104,7 +104,7 @@ export function fallbackMessage(code: ErrorCode): string {
     case "ai_unavailable":
       return "The mentor is unavailable right now. Nothing was charged.";
     case "ai_key_rejected":
-      return "The provider rejected your API key. Check it in the CodeMentor popup.";
+      return "The provider rejected the request. Check your key and provider in the CodeMentor popup.";
     case "byok_unavailable":
       return "This server cannot store a personal key right now.";
     case "ai_busy":

@@ -210,9 +210,11 @@ class GatewayConfig:
             ("openai", "fast"): "gpt-4o-mini",
             ("openai", "balanced"): "gpt-4o",
             ("openai", "strong"): "gpt-4o",
-            ("gemini", "fast"): "gemini-2.0-flash-lite",
-            ("gemini", "balanced"): "gemini-2.0-flash",
-            ("gemini", "strong"): "gemini-2.5-pro",
+            # Google retires old snapshots for new keys (2.0-flash and 2.5-pro
+            # now 404), so use the current lite alias and current flash version.
+            ("gemini", "fast"): "gemini-flash-lite-latest",
+            ("gemini", "balanced"): "gemini-3.5-flash",
+            ("gemini", "strong"): "gemini-3.5-flash",
             ("anthropic", "fast"): "claude-3-5-haiku-latest",
             ("anthropic", "balanced"): "claude-3-5-sonnet-latest",
             ("anthropic", "strong"): "claude-3-7-sonnet-latest",
