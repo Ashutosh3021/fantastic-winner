@@ -220,6 +220,9 @@ def create_app() -> FastAPI:
             # Whether /account/ai-key can work at all. False here explains a
             # byok_unavailable error without reading the deployment's secrets.
             "byok": bool(settings.byok.configured),
+            # Render sets this at build time, so a deploy can be confirmed from
+            # outside without guessing from restart timing.
+            "revision": (os.environ.get("RENDER_GIT_COMMIT") or "dev")[:7],
         }
 
     app.include_router(auth.router, prefix=API_PREFIX)
