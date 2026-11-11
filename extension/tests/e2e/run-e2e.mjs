@@ -6,6 +6,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 const playwright = path.join(root, "node_modules", "@playwright", "test", "cli.js");
 
+// Shared with `build-extension.mjs` and `harness.ts`; the build and the browser
+// must look at the same directory, and it must not be the shippable `.output`.
+process.env.WXT_OUT_DIR ??= ".output-e2e";
+
 const build = spawnSync(process.execPath, [path.join(here, "build-extension.mjs")], {
   cwd: root,
   stdio: "inherit",

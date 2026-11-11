@@ -12,6 +12,8 @@ const result = spawnSync(process.execPath, [wxt, "build"], {
   env: {
     ...process.env,
     NODE_ENV: "production",
+    // Keep the localhost-API build out of `.output`; that directory ships.
+    WXT_OUT_DIR: process.env.WXT_OUT_DIR ?? ".output-e2e",
     VITE_API_BASE_URL: process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:8787",
   },
 });

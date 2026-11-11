@@ -6,6 +6,7 @@
 node_modules/
 dist/
 # .output/
+.output-e2e/
 
 # python
 __pycache__/

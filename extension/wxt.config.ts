@@ -55,6 +55,9 @@ if (process.env.NODE_ENV === "production" && API_BASE_URL === PLACEHOLDER_API_BA
 
 export default defineConfig({
   srcDir: ".",
+  // The E2E harness must not overwrite the shippable build (it bakes a
+  // localhost API origin), so it points this at a separate directory.
+  outDir: process.env.WXT_OUT_DIR?.trim() || ".output",
   modules: ["@wxt-dev/module-react"],
 
   manifest: {

@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const EXTENSION_PATH = path.resolve(here, "../../.output/chrome-mv3");
+const OUT_DIR = process.env.WXT_OUT_DIR?.trim() || ".output";
+export const EXTENSION_PATH = path.resolve(here, "../..", OUT_DIR, "chrome-mv3");
 
 function chromiumCandidates(root: string): string[] {
   if (!existsSync(root)) return [];
