@@ -502,18 +502,25 @@ class AIProvider(StrEnum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GEMINI = "gemini"
+    GROQ = "groq"
 
 class AIKeyInput(Base):
     """Inbound key. ``SecretStr`` keeps it out of reprs, logs and tracebacks."""
 
     provider: AIProvider
     api_key: SecretStr = Field(min_length=8, max_length=512)
+    #: Optional override for the provider's default model (Groq owners use
+    #: this because its catalogue changes faster than our defaults).
+    model: str | None = Field(
+        default=None, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    )
 
 class AIKeyView(Base):
     """Metadata only. There is deliberately no ciphertext and no raw key."""
 
     provider: AIProvider
     hint: str = Field(min_length=1, max_length=8)
+    model: str | None = None
     updatedAt: str
 
 class MeResponse(Base):

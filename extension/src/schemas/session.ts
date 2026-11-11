@@ -98,7 +98,12 @@ export type Preferences = z.infer<typeof preferencesSchema>;
 export const preferencesPatchSchema = preferencesSchema.partial().omit({ prefs_version: true });
 export type PreferencesPatch = z.infer<typeof preferencesPatchSchema>;
 
-export const aiProviderSchema = z.enum(["openai", "anthropic", "gemini"]);
+export const aiProviderSchema = z.enum([
+  "openai",
+  "anthropic",
+  "gemini",
+  "groq",
+]);
 export type AIProvider = z.infer<typeof aiProviderSchema>;
 
 /**
@@ -109,6 +114,7 @@ export const aiKeySchema = z
   .object({
     provider: aiProviderSchema,
     hint: z.string().min(1).max(8),
+    model: z.string().min(1).max(128).nullable().default(null),
     updatedAt: isoDate,
   })
   .strict();
@@ -117,6 +123,7 @@ export type AIKey = z.infer<typeof aiKeySchema>;
 export const aiKeyInputSchema = z.object({
   provider: aiProviderSchema,
   api_key: z.string().min(8).max(512),
+  model: z.string().min(1).max(128).nullable().optional(),
 });
 export type AIKeyInput = z.infer<typeof aiKeyInputSchema>;
 

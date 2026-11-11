@@ -84,3 +84,5 @@ services:
         sync: false
       - key: AI_GEMINI_KEY
         sync: false
+      - key: AI_GROQ_KEY
+        sync: false

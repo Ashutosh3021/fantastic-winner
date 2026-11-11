@@ -14,6 +14,8 @@ configuration makes elsewhere.
 from __future__ import annotations
 
 import base64
+import json
+import re
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -34,13 +36,18 @@ _KDF_INFO = b"fernet-key"
 
 _derivation_warned = False
 
-ALLOWED_PROVIDERS = ("openai", "anthropic", "gemini")
+ALLOWED_PROVIDERS = ("openai", "anthropic", "gemini", "groq")
 
 #: Below this a value is almost certainly a typo rather than a provider key.
 MIN_KEY_LENGTH = 8
 
 #: Only the last four characters are ever stored or shown.
 HINT_LENGTH = 4
+
+#: Provider model ids: ``llama-3.3-70b-versatile``, ``openai/gpt-oss-120b``,
+#: ``accounts/fireworks/models/...`` and similar. Kept deliberately permissive;
+#: the provider is the authority on which ids exist.
+_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
 class ByokService:
@@ -86,11 +93,26 @@ class ByokService:
         return base64.urlsafe_b64encode(derived).decode("ascii")
 
     def encrypt(self, api_key: str) -> str:
-        return self._fernet().encrypt(api_key.encode("utf-8")).decode("ascii")
+        return self._seal(api_key, None)
 
     def decrypt(self, ciphertext: str) -> str:
+        return self._open(ciphertext)[0]
+
+    def _seal(self, api_key: str, model: str | None) -> str:
+        """Store the key and any model choice in one opaque value.
+
+        The model is not a secret, but keeping it inside the same ciphertext
+        avoids a schema migration for a value that only matters alongside the
+        key it was chosen with.
+        """
+        payload: dict[str, str] = {"key": api_key}
+        if model:
+            payload["model"] = model
+        return self._fernet().encrypt(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+    def _open(self, ciphertext: str) -> tuple[str, str | None]:
         try:
-            return self._fernet().decrypt(ciphertext.encode("ascii")).decode("utf-8")
+            raw = self._fernet().decrypt(ciphertext.encode("ascii")).decode("utf-8")
         except (InvalidToken, UnicodeDecodeError) as exc:
             # A rotated or corrupted key cannot be recovered. Fail closed rather
             # than silently falling back to the server key, which would bill us.
@@ -99,44 +121,76 @@ class ByokService:
                 "Your saved API key could not be read. Please save it again."
             ) from exc
 
+        # Rows written before model selection hold the bare key.
+        if not raw.startswith("{"):
+            return raw, None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw, None
+        if not isinstance(payload, dict) or not isinstance(payload.get("key"), str):
+            return raw, None
+        model = payload.get("model")
+        return payload["key"], model if isinstance(model, str) and model else None
+
     # -- public operations ---
 
-    async def save(self, *, user_id: str, provider: str, api_key: str) -> dict[str, Any]:
+    async def save(
+        self,
+        *,
+        user_id: str,
+        provider: str,
+        api_key: str,
+        model: str | None = None,
+    ) -> dict[str, Any]:
         provider = provider.strip().lower()
         api_key = api_key.strip()
+        model = (model or "").strip() or None
         if provider not in ALLOWED_PROVIDERS:
-            raise BadRequest("Choose OpenAI, Anthropic or Gemini.")
+            raise BadRequest("Choose OpenAI, Anthropic, Gemini or Groq.")
         if len(api_key) < MIN_KEY_LENGTH:
             raise BadRequest("That API key looks too short.")
+        if model is not None and not _MODEL_ID.match(model):
+            raise BadRequest("That model id does not look valid.")
 
-        ciphertext = self.encrypt(api_key)
+        ciphertext = self._seal(api_key, model)
         row = await self.repo.upsert(
             user_id=user_id,
             provider=provider,
             ciphertext=ciphertext,
             hint=api_key[-HINT_LENGTH:],
         )
-        return self.view(row)
+        return self.view(row, model=model)
 
     async def metadata(self, user_id: str) -> dict[str, Any] | None:
         row = await self.repo.for_user(user_id)
-        return self.view(row) if row else None
+        if not row:
+            return None
+        try:
+            model = self._open(str(row.get("key_ciphertext") or ""))[1]
+        except ByokUnavailable:
+            # Still report the provider and hint so a broken credential can be
+            # seen and removed instead of disappearing from the popup.
+            model = None
+        return self.view(row, model=model)
 
     async def remove(self, user_id: str) -> None:
         await self.repo.delete_for_user(user_id)
 
-    def decrypt_row(self, row: dict[str, Any]) -> tuple[str, str]:
+    def decrypt_row(self, row: dict[str, Any]) -> tuple[str, str, str | None]:
         provider = str(row.get("provider") or "")
         if provider not in ALLOWED_PROVIDERS:
             raise ByokUnavailable("Your saved API key is not usable. Please save it again.")
-        return provider, self.decrypt(str(row.get("key_ciphertext") or ""))
+        key, model = self._open(str(row.get("key_ciphertext") or ""))
+        return provider, key, model
 
     @staticmethod
-    def view(row: dict[str, Any]) -> dict[str, Any]:
+    def view(row: dict[str, Any], *, model: str | None = None) -> dict[str, Any]:
         """Metadata only. The ciphertext never leaves the service boundary."""
         return {
             "provider": str(row.get("provider") or ""),
             "hint": str(row.get("key_hint") or ""),
+            "model": model,
             "updatedAt": str(row.get("updated_at") or ""),
         }
 

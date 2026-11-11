@@ -16,13 +16,19 @@ from typing import Any, ClassVar
 import httpx
 import pytest
 from cryptography.fernet import Fernet
+from pydantic import ValidationError
 
 from app.ai import runtime
 from app.ai.gateway import AIGateway, TaskSpec
 from app.ai.providers import ProviderError
 from app.api.routers.learning import _spend_credit
 from app.core.config import ByokConfig, ProviderKeys, Settings
-from app.core.errors import AiKeyRejected, AiUnavailable, ByokUnavailable
+from app.core.errors import (
+    AiKeyRejected,
+    AiUnavailable,
+    BadRequest,
+    ByokUnavailable,
+)
 from app.repositories.store import SpendRepository, UserAICredentialRepository
 from app.schemas.models import AIKeyInput, AIKeyView, MeResponse
 from app.services.auth_service import Identity
@@ -33,6 +39,7 @@ from tests.conftest import FakeGateway
 
 SERVER_KEY = "server-key-for-tests"
 USER_KEY = "sk-user-own-key-1234"
+GROQ_KEY = "gsk-user-own-key-1234"
 
 
 # ── storage and encryption ──────────────────────────────────────────────────
@@ -77,6 +84,7 @@ class TestEncryption:
         assert view == {
             "provider": "openai",
             "hint": "1234",
+            "model": None,
             "updatedAt": "2026-01-01T00:00:00Z",
         }
         assert USER_KEY not in str(view)
@@ -126,6 +134,65 @@ class TestEncryption:
         await service.save(user_id="u1", provider="gemini", api_key=USER_KEY)
         await service.remove("u1")
         assert await service.metadata("u1") is None
+
+    async def test_groq_key_and_model_round_trip(self) -> None:
+        repo = _StubCredentialRepo()
+        service = ByokService(repo, _config())
+
+        view = await service.save(
+            user_id="u1",
+            provider="groq",
+            api_key=GROQ_KEY,
+            model="openai/gpt-oss-120b",
+        )
+
+        assert view["provider"] == "groq"
+        assert view["model"] == "openai/gpt-oss-120b"
+        assert GROQ_KEY not in str(view)
+        metadata = await service.metadata("u1")
+        assert metadata is not None and metadata["model"] == "openai/gpt-oss-120b"
+        assert service.decrypt_row(repo.rows["u1"]) == (
+            "groq",
+            GROQ_KEY,
+            "openai/gpt-oss-120b",
+        )
+
+    async def test_rows_written_without_a_model_still_read(self) -> None:
+        repo = _StubCredentialRepo()
+        service = ByokService(repo, _config())
+        await service.save(user_id="u1", provider="openai", api_key=USER_KEY)
+
+        repo.rows["u1"]["key_ciphertext"] = service.encrypt(USER_KEY)
+
+        assert service.decrypt_row(repo.rows["u1"]) == ("openai", USER_KEY, None)
+        metadata = await service.metadata("u1")
+        assert metadata is not None and metadata["model"] is None
+
+    async def test_invalid_model_id_is_rejected(self) -> None:
+        service = ByokService(_StubCredentialRepo(), _config())
+
+        with pytest.raises(BadRequest):
+            await service.save(
+                user_id="u1", provider="groq", api_key=GROQ_KEY, model="not a model"
+            )
+
+    def test_model_is_validated_at_the_schema_boundary(self) -> None:
+        inbound = AIKeyInput(
+            provider="groq", api_key=GROQ_KEY, model="openai/gpt-oss-120b"
+        )
+        assert inbound.model == "openai/gpt-oss-120b"
+
+        with pytest.raises(ValidationError):
+            AIKeyInput(provider="groq", api_key=GROQ_KEY, model="bad model!")
+
+    def test_groq_is_a_first_class_provider(self) -> None:
+        from app.ai.gateway import _PROVIDER_CLASSES
+        from app.ai.providers import GroqProvider
+        from app.core.config import GatewayConfig
+
+        assert _PROVIDER_CLASSES["groq"] is GroqProvider
+        assert GroqProvider.base_url == "https://api.groq.com/openai/v1/chat/completions"
+        assert GatewayConfig().model_for("groq", "fast")
 
     def test_secret_str_and_response_models_never_leak_the_key(self) -> None:
         inbound = AIKeyInput(provider="openai", api_key=USER_KEY)
@@ -268,6 +335,24 @@ class TestOwnKeyRouting:
             await gateway.run(_spec(), api_key=USER_KEY, provider="openai")
 
         assert "no such model" in str(raised.value)
+        await gateway.aclose()
+
+    async def test_custom_model_builds_a_provider_for_that_model(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "app.ai.gateway._PROVIDER_CLASSES", {"openai": _RecordingProvider}
+        )
+        gateway = AIGateway(_settings())
+
+        default = await gateway._provider_for_key("openai", USER_KEY)
+        custom = await gateway._provider_for_key("openai", USER_KEY, "custom-model")
+
+        assert default is not custom
+        assert custom._model_for("openai", "fast") == "custom-model"
+
+        await gateway.forget_own_key(USER_KEY)
+        assert not gateway._byok_providers
         await gateway.aclose()
 
     async def test_context_key_is_used_when_no_argument_is_passed(

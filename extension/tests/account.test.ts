@@ -85,7 +85,21 @@ describe("me schema", () => {
     expect(parsed.aiKey).toEqual({
       provider: "anthropic",
       hint: "9f2a",
+      model: null,
       updatedAt: "2026-01-02T00:00:00Z",
     });
+  });
+
+  it("accepts a Groq key with a custom model", () => {
+    const parsed = meSchema.parse({
+      ...BASE_ME,
+      aiKey: {
+        provider: "groq",
+        hint: "1234",
+        model: "openai/gpt-oss-120b",
+        updatedAt: "2026-01-02T00:00:00Z",
+      },
+    });
+    expect(parsed.aiKey?.model).toBe("openai/gpt-oss-120b");
   });
 });

@@ -44,6 +44,7 @@ from .providers import (
     AnthropicProvider,
     FinishReason,
     GeminiProvider,
+    GroqProvider,
     OfflineProvider,
     OpenAIProvider,
     Provider,
@@ -55,10 +56,13 @@ logger = get_logger(__name__)
 
 #: Own-key providers reuse the existing HTTP classes. Nothing else changes:
 #: the key is a constructor argument, not a new provider implementation.
-_PROVIDER_CLASSES: dict[str, type[OpenAIProvider | AnthropicProvider | GeminiProvider]] = {
+_PROVIDER_CLASSES: dict[
+    str, type[OpenAIProvider | AnthropicProvider | GeminiProvider | GroqProvider]
+] = {
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
     "gemini": GeminiProvider,
+    "groq": GroqProvider,
 }
 
 # : Pools, so a heavy generation cannot starve an interactive answer check.
@@ -121,9 +125,9 @@ class AIGateway:
         )
         self._providers = self._build_providers(settings)
         self._pools = self._build_pools()
-        # : Per-key provider instances, keyed by sha256 of the raw key. The raw
-        # : key is never used as a dictionary key or logged.
-        self._byok_providers: OrderedDict[str, tuple[str, Any]] = OrderedDict()
+        # : Per-key provider instances, keyed by sha256 of the raw key and the
+        # : chosen model. The raw key is never a dictionary key or a log field.
+        self._byok_providers: OrderedDict[str, tuple[str, Any, str]] = OrderedDict()
 
     # --- construction ---
 
@@ -133,6 +137,7 @@ class AIGateway:
             "openai": OpenAIProvider(settings.keys.openai, model_for),
             "anthropic": AnthropicProvider(settings.keys.anthropic, model_for),
             "gemini": GeminiProvider(settings.keys.gemini, model_for),
+            "groq": GroqProvider(settings.keys.groq, model_for),
         }
         # The offline provider is a *last* resort and only exists when explicitly
         # enabled with no real key configured, so it can never shadow a real one.
@@ -179,21 +184,26 @@ class AIGateway:
 
         own = list(self._byok_providers.values())
         self._byok_providers.clear()
-        for _name, provider in own:
+        for _name, provider, _digest in own:
             try:
                 await provider.aclose()
             except Exception as exc:
                 logger.warning("closing an own-key provider failed: %s", exc)
 
     async def forget_own_key(self, api_key: str) -> None:
-        """Drop a cached provider after its key is removed or rotated."""
-        cached = self._byok_providers.pop(_key_digest(api_key), None)
-        if cached is None:
-            return
-        try:
-            await cached[1].aclose()
-        except Exception as exc:
-            logger.warning("closing a removed own-key provider failed: %s", exc)
+        """Drop every cached provider for a key, whatever model it used."""
+        base = _key_digest(api_key)
+        stale = [
+            digest
+            for digest, (_name, _provider, key_digest) in self._byok_providers.items()
+            if key_digest == base
+        ]
+        for digest in stale:
+            _name, cached, _key = self._byok_providers.pop(digest)
+            try:
+                await cached.aclose()
+            except Exception as exc:
+                logger.warning("closing a removed own-key provider failed: %s", exc)
 
     async def run(
         self,
@@ -201,13 +211,15 @@ class AIGateway:
         *,
         api_key: str | None = None,
         provider: str | None = None,
+        model: str | None = None,
     ) -> GatewayResult:
         context = runtime.current_context()
         own_key = api_key or context.api_key
         own_provider = provider or context.provider
+        own_model = model or context.model
 
         if own_key:
-            return await self._run_with_own_key(spec, own_provider, own_key)
+            return await self._run_with_own_key(spec, own_provider, own_key, own_model)
 
         order = self._config.provider_order.get(spec.tier, ("openai",))
         semaphore = self._pools[spec.pool]
@@ -224,7 +236,11 @@ class AIGateway:
             semaphore.release()
 
     async def _run_with_own_key(
-        self, spec: TaskSpec, provider_name: str | None, api_key: str
+        self,
+        spec: TaskSpec,
+        provider_name: str | None,
+        api_key: str,
+        model: str | None = None,
     ) -> GatewayResult:
         """Use exactly one provider, and never fall back to a server key.
 
@@ -249,7 +265,7 @@ class AIGateway:
             raise AiBusy("The mentor is busy right now.") from exc
 
         try:
-            provider = await self._provider_for_key(provider_name, api_key)
+            provider = await self._provider_for_key(provider_name, api_key, model)
             digest = _key_digest(api_key)
             return await self._run_with_fallback(
                 spec,
@@ -261,18 +277,26 @@ class AIGateway:
         finally:
             semaphore.release()
 
-    async def _provider_for_key(self, name: str, api_key: str) -> Any:
-        digest = _key_digest(api_key)
+    async def _provider_for_key(
+        self, name: str, api_key: str, model: str | None = None
+    ) -> Any:
+        base = _key_digest(api_key)
+        digest = _key_digest(f"{api_key}\x00{model or ''}")
         cached = self._byok_providers.get(digest)
         if cached is not None:
             self._byok_providers.move_to_end(digest)
             return cached[1]
 
-        provider = _PROVIDER_CLASSES[name](api_key, self._config.model_for)
-        self._byok_providers[digest] = (name, provider)
+        model_for = (
+            (lambda _name, _tier: model) if model else self._config.model_for
+        )
+        provider = _PROVIDER_CLASSES[name](api_key, model_for)
+        self._byok_providers[digest] = (name, provider, base)
         limit = max(1, self._settings.byok.max_cached_providers)
         while len(self._byok_providers) > limit:
-            _old_digest, (_old_name, evicted) = self._byok_providers.popitem(last=False)
+            _old_digest, (_old_name, evicted, _key) = self._byok_providers.popitem(
+                last=False
+            )
             try:
                 await evicted.aclose()
             except Exception as exc:
@@ -619,7 +643,11 @@ class AIGateway:
         context = runtime.current_context()
         model = ""
         if provider:
-            model = self._config.model_for(provider, spec.tier)
+            model = (
+                context.model
+                if context.own_key
+                else self._config.model_for(provider, spec.tier)
+            ) or self._config.model_for(provider, spec.tier)
         try:
             await self._spend_writer(
                 request_id=context.request_id or "-",

@@ -200,9 +200,9 @@ class GatewayConfig:
     # : Per-tier fallback order. The first entry with a configured key wins.
     provider_order: dict[Tier, tuple[str, ...]] = field(
         default_factory=lambda: {
-            "fast": ("openai", "gemini", "anthropic"),
-            "balanced": ("openai", "anthropic", "gemini"),
-            "strong": ("anthropic", "openai", "gemini"),
+            "fast": ("openai", "gemini", "anthropic", "groq"),
+            "balanced": ("openai", "anthropic", "gemini", "groq"),
+            "strong": ("anthropic", "openai", "gemini", "groq"),
         }
     )
     models: dict[tuple[str, Tier], str] = field(
@@ -218,6 +218,11 @@ class GatewayConfig:
             ("anthropic", "fast"): "claude-3-5-haiku-latest",
             ("anthropic", "balanced"): "claude-3-5-sonnet-latest",
             ("anthropic", "strong"): "claude-3-7-sonnet-latest",
+            # Groq's catalogue changes often; owners can override any of these
+            # with their own model id when they save the key.
+            ("groq", "fast"): "llama-3.1-8b-instant",
+            ("groq", "balanced"): "llama-3.3-70b-versatile",
+            ("groq", "strong"): "openai/gpt-oss-120b",
         }
     )
     concurrency_interactive: int = 8
@@ -276,12 +281,13 @@ class ProviderKeys:
     openai: str = ""
     gemini: str = ""
     anthropic: str = ""
+    groq: str = ""
 
     def for_provider(self, name: str) -> str:
         return getattr(self, name, "") or ""
 
     def any_configured(self) -> bool:
-        return bool(self.openai or self.gemini or self.anthropic)
+        return bool(self.openai or self.gemini or self.anthropic or self.groq)
 
 @dataclass(frozen=True)
 class Settings:
@@ -435,6 +441,7 @@ def get_settings() -> Settings:
             openai=_env("AI_OPENAI_KEY") or _env("OPENAI_API_KEY"),
             gemini=_env("AI_GEMINI_KEY") or _env("GEMINI_API_KEY"),
             anthropic=_env("AI_ANTHROPIC_KEY") or _env("ANTHROPIC_API_KEY"),
+            groq=_env("AI_GROQ_KEY") or _env("GROQ_API_KEY"),
         ),
         byok=ByokConfig(
             encryption_key=_env("BYOK_ENCRYPTION_KEY"),

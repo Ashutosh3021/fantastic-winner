@@ -115,6 +115,7 @@ class AIContext:
     own_key: bool
     provider: str | None
     api_key: str | None
+    model: str | None
 
 
 async def get_ai_context(
@@ -133,13 +134,15 @@ async def get_ai_context(
 
     provider: str | None = None
     api_key: str | None = None
+    model: str | None = None
     if row is not None:
-        provider, api_key = container.byok.decrypt_row(row)
+        provider, api_key, model = container.byok.decrypt_row(row)
 
     token = runtime.set_context(
         runtime.AICallContext(
             api_key=api_key,
             provider=provider,
+            model=model,
             user_id=caller.identity.user_id,
             request_id=getattr(request.state, "request_id", None),
             funded_by=(
@@ -149,7 +152,10 @@ async def get_ai_context(
     )
     try:
         yield AIContext(
-            own_key=bool(api_key and provider), provider=provider, api_key=api_key
+            own_key=bool(api_key and provider),
+            provider=provider,
+            api_key=api_key,
+            model=model,
         )
     finally:
         with contextlib.suppress(ValueError):

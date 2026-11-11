@@ -91,7 +91,23 @@ const PROVIDERS: { id: AIProvider; label: string }[] = [
   { id: "openai", label: "OpenAI" },
   { id: "anthropic", label: "Anthropic" },
   { id: "gemini", label: "Google Gemini" },
+  { id: "groq", label: "Groq" },
 ];
+
+// Convenience list, not a whitelist: Groq's catalogue turns over quickly, so
+// the custom option next to it accepts any model id the account can use.
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "qwen/qwen3-32b",
+  "moonshotai/kimi-k2-instruct",
+  "meta-llama/llama-4-maverick-17b-128e-instruct",
+];
+
+const MODEL_DEFAULT = "default";
+const MODEL_CUSTOM = "custom";
 
 /** "12 runs / 5h" from the actual window rather than a hard-coded limit. */
 function usageWindowLabel(usage: Usage): string {
@@ -529,6 +545,8 @@ function AiKeySection({
   onChange: (next: AIKey | null) => void;
 }) {
   const [provider, setProvider] = useState<AIProvider>("openai");
+  const [modelChoice, setModelChoice] = useState(MODEL_DEFAULT);
+  const [customModel, setCustomModel] = useState("");
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
   // `saving` only disables the button after the next render, so a fast double
@@ -537,8 +555,34 @@ function AiKeySection({
   const savingRef = useRef(false);
 
   useEffect(() => {
-    if (aiKey) setProvider(aiKey.provider);
+    if (!aiKey) return;
+    setProvider(aiKey.provider);
+    if (aiKey.model && GROQ_MODELS.includes(aiKey.model)) {
+      setModelChoice(aiKey.model);
+    } else if (aiKey.model) {
+      setModelChoice(MODEL_CUSTOM);
+      setCustomModel(aiKey.model);
+    } else {
+      setModelChoice(MODEL_DEFAULT);
+    }
   }, [aiKey]);
+
+  const modelForSave =
+    provider !== "groq"
+      ? null
+      : modelChoice === MODEL_CUSTOM
+        ? customModel.trim() || null
+        : modelChoice === MODEL_DEFAULT
+          ? null
+          : modelChoice;
+
+  function changeProvider(next: AIProvider) {
+    setProvider(next);
+    if (next !== "groq") {
+      setModelChoice(MODEL_DEFAULT);
+      setCustomModel("");
+    }
+  }
 
   async function save() {
     if (savingRef.current) return;
@@ -556,7 +600,9 @@ function AiKeySection({
         toast("Sign in before saving an API key.");
         return;
       }
-      const res = await api("aiKeyPut", { body: { provider, api_key: trimmed } });
+      const res = await api("aiKeyPut", {
+        body: { provider, api_key: trimmed, model: modelForSave },
+      });
       // A 200 from the write is not proof of a stored credential. Read it back
       // and only then tell the learner it saved; otherwise a silent write
       // failure looks like the key was accepted and then ignored.
@@ -564,7 +610,8 @@ function AiKeySection({
       if (
         !stored.data ||
         stored.data.provider !== res.data.provider ||
-        stored.data.hint !== res.data.hint
+        stored.data.hint !== res.data.hint ||
+        (stored.data.model ?? null) !== modelForSave
       ) {
         toast("The server did not save the key. Try again.");
         return;
@@ -622,6 +669,7 @@ function AiKeySection({
           </div>
           <p className="text-[11px] leading-relaxed text-muted-foreground">
             Stored encrypted. Requests use this key and never fall back to ours.
+            {aiKey.model ? ` Model: ${aiKey.model}.` : ""}
           </p>
         </div>
       ) : (
@@ -630,7 +678,7 @@ function AiKeySection({
         </p>
       )}
 
-      <Select value={provider} onValueChange={(value) => setProvider(value as AIProvider)}>
+      <Select value={provider} onValueChange={(value) => changeProvider(value as AIProvider)}>
         <SelectTrigger id="ai-provider">
           {PROVIDERS.find((item) => item.id === provider)?.label ?? provider}
         </SelectTrigger>
@@ -646,6 +694,52 @@ function AiKeySection({
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         Choose the provider that issued this key — one provider's key is rejected by another.
       </p>
+
+      {provider === "groq" && (
+        <>
+          <Label htmlFor="ai-model">Model</Label>
+          <Select
+            value={modelChoice}
+            onValueChange={(value) => {
+              setModelChoice(value);
+              if (value !== MODEL_CUSTOM) setCustomModel("");
+            }}
+          >
+            <SelectTrigger id="ai-model">
+              {modelChoice === MODEL_CUSTOM
+                ? "Custom model id"
+                : modelChoice === MODEL_DEFAULT
+                  ? "Default (llama-3.3-70b-versatile)"
+                  : modelChoice}
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={MODEL_DEFAULT}>
+                Default (llama-3.3-70b-versatile)
+              </SelectItem>
+              {GROQ_MODELS.map((id) => (
+                <SelectItem key={id} value={id}>
+                  {id}
+                </SelectItem>
+              ))}
+              <SelectItem value={MODEL_CUSTOM}>Custom model id…</SelectItem>
+            </SelectContent>
+          </Select>
+          {modelChoice === MODEL_CUSTOM && (
+            <Input
+              value={customModel}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="e.g. openai/gpt-oss-120b"
+              className="font-mono text-xs"
+              onChange={(event) => setCustomModel(event.target.value)}
+            />
+          )}
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            Must be a model id Groq serves to this key. Leave on Default to use the
+            built-in choice.
+          </p>
+        </>
+      )}
 
       <div className="flex gap-1.5">
         <Input

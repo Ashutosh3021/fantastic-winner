@@ -25,6 +25,9 @@ class AICallContext:
     # : Present only for a bring-your-own-key request.
     api_key: str | None = None
     provider: str | None = None
+    # : Optional model id chosen with the own key. ``None`` means the
+    # : provider's configured default for the task tier.
+    model: str | None = None
     user_id: str | None = None
     request_id: str | None = None
     funded_by: str = FUNDED_BY_CODEMENTOR
@@ -37,6 +40,7 @@ class AICallContext:
         return AICallContext(
             api_key=self.api_key,
             provider=self.provider,
+            model=self.model,
             user_id=user_id,
             request_id=request_id,
             funded_by=self.funded_by,

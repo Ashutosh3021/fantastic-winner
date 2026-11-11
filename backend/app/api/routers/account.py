@@ -75,6 +75,7 @@ async def put_ai_key(
         user_id=caller.identity.user_id,
         provider=str(body.provider),
         api_key=body.api_key.get_secret_value(),
+        model=body.model,
     )
     return AIKeyView.model_validate(view)
 
@@ -86,7 +87,7 @@ async def delete_ai_key(container: ContainerDep, caller: CallerDep) -> Response:
     row = await container.ai_keys.for_user(caller.identity.user_id)
     if row is not None:
         try:
-            _provider, key = container.byok.decrypt_row(row)
+            _provider, key, _model = container.byok.decrypt_row(row)
         except Exception:
             # A corrupt or unreadable credential must still be deletable.
             key = ""

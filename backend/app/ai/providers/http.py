@@ -116,6 +116,13 @@ class OpenAIProvider:
             raw={"model": data.get("model", "")},
         )
 
+class GroqProvider(OpenAIProvider):
+    """Groq speaks OpenAI's chat wire format; only host and name differ."""
+
+    name = "groq"
+    base_url = "https://api.groq.com/openai/v1/chat/completions"
+
+
 class AnthropicProvider:
     name = "anthropic"
     base_url = "https://api.anthropic.com/v1/messages"
@@ -260,4 +267,9 @@ class GeminiProvider:
             raw={"model": model},
         )
 
-ALL_PROVIDERS: tuple[type, ...] = (OpenAIProvider, AnthropicProvider, GeminiProvider)
+ALL_PROVIDERS: tuple[type, ...] = (
+    OpenAIProvider,
+    AnthropicProvider,
+    GeminiProvider,
+    GroqProvider,
+)

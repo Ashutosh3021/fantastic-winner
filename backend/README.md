@@ -41,6 +41,7 @@ the value the code actually defaults to. Only three matter to start:
 | `PYRONITES_KEY` | API key, scoped to one project |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth app used for sign-in |
 | `AI_ANTHROPIC_KEY` / `AI_OPENAI_KEY` / `AI_GEMINI_KEY` | At least one, in production |
+| `AI_GROQ_KEY` | Optional; only needed for server-funded Groq |
 
 List variables are comma separated: `EXTENSION_RETURN_ORIGINS=chrome-extension://abc,https://app.example`.
 
