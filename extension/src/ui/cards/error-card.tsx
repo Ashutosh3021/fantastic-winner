@@ -29,6 +29,7 @@ export function ErrorCard({
   const t = strings(language);
   const offline = error.code === "network_error" || error.code === "timeout";
   const updated = error.code === "context_invalidated";
+  const keyRejected = error.code === "ai_key_rejected";
 
   const body =
     error.code === "ip_budget"
@@ -48,7 +49,9 @@ export function ErrorCard({
             ? t.networkErrorBody
             : updated
               ? "CodeMentor was updated"
-              : "Something interrupted that"}
+              : keyRejected
+                ? "Your provider key was rejected"
+                : "Something interrupted that"}
         </CardTitle>
         <p className="font-mono text-[11px] text-muted-foreground/80">{error.code}</p>
       </CardHeader>
@@ -57,6 +60,12 @@ export function ErrorCard({
         <p className="text-sm leading-relaxed">{body}</p>
 
         {offline && <Notice tone="info">{t.offlineBody}</Notice>}
+
+        {keyRejected && (
+          <Notice tone="warning">
+            Open the CodeMentor popup and check that the key matches the selected provider.
+          </Notice>
+        )}
 
         {updated && (
           <div className="pt-1">
@@ -83,7 +92,7 @@ export function ErrorCard({
 
         {children}
 
-        {onRetry && !updated && (
+        {onRetry && !updated && !keyRejected && (
           <div className="pt-1">
             <Button variant="outline" size="sm" onClick={onRetry}>
               <AppIcon icon={RefreshIcon} size={14} />

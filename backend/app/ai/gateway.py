@@ -32,6 +32,7 @@ from ..core.config import GatewayConfig, Settings, Tier
 from ..core.errors import (
     AiBusy,
     AiInvalidOutput,
+    AiKeyRejected,
     AiOutputTruncated,
     AiUnavailable,
     UpstreamError,
@@ -449,6 +450,32 @@ class AIGateway:
             spec.prompt_version,
             type(last_error).__name__ if last_error else "no provider available",
         )
+
+        if funded_by == runtime.FUNDED_BY_USER and isinstance(last_error, ProviderError):
+            # With an own key there is no fallback, so the learner needs to know
+            # that the key or provider choice is what failed. "No provider is
+            # available" reads like a CodeMentor outage and sends them to retry.
+            status = last_error.provider_status
+            if status in (401, 403):
+                raise AiKeyRejected(
+                    "The provider rejected your API key. Check that the key matches "
+                    "the selected provider and has not been revoked."
+                )
+            if status == 404:
+                raise AiKeyRejected(
+                    "The provider did not recognize the request. Check that the key "
+                    "belongs to the selected provider."
+                )
+            if status == 400:
+                raise AiKeyRejected(
+                    "The provider rejected the request. Your key may not have access "
+                    "to the configured model."
+                )
+            raise AiKeyRejected(
+                f"The provider rejected the request (HTTP {status}). Check the key "
+                "and the selected provider."
+            )
+
         raise AiUnavailable("No AI provider is currently available.")
 
     # --- one provider call ---

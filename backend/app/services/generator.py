@@ -24,6 +24,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from ..ai import runtime
 from ..ai.gateway import (
     POOL_ANALYSIS,
     POOL_GENERATION,
@@ -34,7 +35,7 @@ from ..ai.gateway import (
 from ..ai.prompts import PROMPT_VERSION, system_prompt
 from ..cache.store import CacheKeyInput, ContentCache
 from ..core.config import Tier
-from ..core.errors import AiInvalidOutput, AiUnavailable, DegradedMode
+from ..core.errors import AiInvalidOutput, AiKeyRejected, AiUnavailable, DegradedMode
 from ..core.logging import get_logger
 from ..policies import reveal_boundary as boundary
 from ..validators.leak_detector import contains_code, detect_leaks, is_complete_algorithm
@@ -122,6 +123,19 @@ def collect_artifact_texts(payload: Any, artifact: str) -> list[str]:
                 texts.append(item)
     return texts
 
+def _cached_error(code: str | None) -> Exception:
+    """Rebuild the typed error a negative-cache entry stands for."""
+    if code == "ai_key_rejected":
+        return AiKeyRejected(
+            "The provider rejected your API key. Open the CodeMentor popup and "
+            "check that the key matches the selected provider."
+        )
+    if code == "ai_invalid_output":
+        return AiInvalidOutput(
+            "The generated answer did not pass the quality checks. Nothing was charged."
+        )
+    return AiUnavailable("That is temporarily unavailable. Nothing was charged.")
+
 class ContentGenerator:
     def __init__(
         self, gateway: AIGateway, cache: ContentCache, budget: Any
@@ -142,9 +156,17 @@ class ContentGenerator:
 
         cached = await self.cache.lookup(key)
         if cached.negative:
-            raise AiUnavailable(
-                "That is temporarily unavailable. Nothing was charged."
-            )
+            # A cached outage or key failure was recorded before this learner
+            # supplied (or replaced) their own key. Their retry costs CodeMentor
+            # nothing, and honouring the entry would keep a fixed key looking
+            # broken until the negative TTL expired.
+            if runtime.current_context().own_key and cached.error_code in (
+                "ai_unavailable",
+                "ai_key_rejected",
+            ):
+                pass
+            else:
+                raise _cached_error(cached.error_code)
         if cached.hit:
             return GenerateOutcome(
                 payload=cached.payload, cached=True, cache_key=cache_key_str(key)
@@ -180,6 +202,10 @@ class ContentGenerator:
 
         try:
             outcome = await self.cache.single_flight(key.compute(), _produce)
+        except AiKeyRejected:
+            # About this learner's key, not about the problem. Caching it would
+            # punish everyone else who shares the cache key.
+            raise
         except (AiUnavailable, DegradedMode) as exc:
             # Terminal for this key: remember it so nobody re-pays to rediscover.
             await self.cache.store_negative(key, error_code=exc.code)
@@ -188,7 +214,10 @@ class ContentGenerator:
             await self.cache.store_negative(key, error_code="ai_invalid_output")
             raise
         except Exception as exc:
-            if getattr(exc, "code", "") not in ("ai_output_truncated",):
+            if getattr(exc, "code", "") not in (
+                "ai_output_truncated",
+                "ai_key_rejected",
+            ):
                 await self.cache.store_negative(
                     key, error_code=str(getattr(exc, "code", "ai_unavailable"))
                 )

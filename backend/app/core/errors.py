@@ -170,6 +170,17 @@ class AiUnavailable(AppError):
     code = "ai_unavailable"
     status = 503
 
+class AiKeyRejected(AiUnavailable):
+    """The learner's own provider key cannot be used for this request.
+
+    A subclass of :class:`AiUnavailable` so existing callers keep their
+    behaviour, but with its own code and a 422 so the extension can say the key
+    is the problem instead of blaming the service.
+    """
+
+    code = "ai_key_rejected"
+    status = 422
+
 class AiOutputTruncated(AppError):
     """§15.3. Deterministic: retrying repeats the same truncation."""
 

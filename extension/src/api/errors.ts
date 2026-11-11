@@ -103,6 +103,8 @@ export function fallbackMessage(code: ErrorCode): string {
       return "The answer ran past its length budget. Nothing was charged.";
     case "ai_unavailable":
       return "The mentor is unavailable right now. Nothing was charged.";
+    case "ai_key_rejected":
+      return "The provider rejected your API key. Check it in the CodeMentor popup.";
     case "byok_unavailable":
       return "This server cannot store a personal key right now.";
     case "ai_busy":
@@ -143,6 +145,7 @@ export function isFinal(code: ErrorCode): boolean {
     code === "email_unverified" ||
     code === "upgrade_required" ||
     code === "ai_output_truncated" ||
+    code === "ai_key_rejected" ||
     code === "degraded_mode"
   );
 }

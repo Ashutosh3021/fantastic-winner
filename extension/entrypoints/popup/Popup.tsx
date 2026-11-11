@@ -557,7 +557,19 @@ function AiKeySection({
         return;
       }
       const res = await api("aiKeyPut", { body: { provider, api_key: trimmed } });
-      onChange(res.data);
+      // A 200 from the write is not proof of a stored credential. Read it back
+      // and only then tell the learner it saved; otherwise a silent write
+      // failure looks like the key was accepted and then ignored.
+      const stored = await api("aiKeyGet", {});
+      if (
+        !stored.data ||
+        stored.data.provider !== res.data.provider ||
+        stored.data.hint !== res.data.hint
+      ) {
+        toast("The server did not save the key. Try again.");
+        return;
+      }
+      onChange(stored.data);
       setKey("");
       toast("Key saved on the server.");
     } catch (cause: unknown) {
@@ -630,6 +642,10 @@ function AiKeySection({
           ))}
         </SelectContent>
       </Select>
+
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        Choose the provider that issued this key — one provider's key is rejected by another.
+      </p>
 
       <div className="flex gap-1.5">
         <Input

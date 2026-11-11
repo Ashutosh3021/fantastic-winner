@@ -22,7 +22,7 @@ from app.ai.gateway import AIGateway, TaskSpec
 from app.ai.providers import ProviderError
 from app.api.routers.learning import _spend_credit
 from app.core.config import ByokConfig, ProviderKeys, Settings
-from app.core.errors import AiUnavailable, ByokUnavailable
+from app.core.errors import AiKeyRejected, AiUnavailable, ByokUnavailable
 from app.repositories.store import SpendRepository, UserAICredentialRepository
 from app.schemas.models import AIKeyInput, AIKeyView, MeResponse
 from app.services.auth_service import Identity
@@ -236,6 +236,19 @@ class TestOwnKeyRouting:
         assert server_calls == []
         assert _RecordingProvider.created_with == [USER_KEY]
         assert rows and all(row["funded_by"] == "user" for row in rows)
+        await gateway.aclose()
+
+    async def test_rejected_own_key_names_the_key_as_the_problem(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("app.ai.gateway._PROVIDER_CLASSES", {"openai": _RecordingProvider})
+        gateway = AIGateway(_settings())
+
+        with pytest.raises(AiKeyRejected) as raised:
+            await gateway.run(_spec(), api_key=USER_KEY, provider="openai")
+
+        assert "rejected your API key" in str(raised.value)
+        assert raised.value.status == 422
         await gateway.aclose()
 
     async def test_context_key_is_used_when_no_argument_is_passed(
