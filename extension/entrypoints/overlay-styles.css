@@ -1,0 +1,8 @@
+/*
+ * The overlay's stylesheet, as its own entrypoint.
+ *
+ * It cannot live in `content.tsx`: that script never renders the overlay, and
+ * carrying its CSS there meant the always-on bundle owned a 41 KB stylesheet it
+ * never used. `overlay-ui.tsx` fetches this file into the shadow root on mount.
+ */
+@import "../src/ui/styles.css";

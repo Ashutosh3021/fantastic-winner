@@ -1,25 +1,21 @@
 /**
- * Content script (§5.1, §5.2).
+ * Always-on content script (§5.1, §5.2).
  *
- * Owns SPA navigation detection, the extraction ladder, and the Shadow-DOM
- * overlay. It never calls the backend directly and never holds a token — both
- * belong to the service worker (ADR-2).
+ * Owns SPA navigation detection, the extraction ladder, and a lightweight
+ * launcher. It never calls the backend directly and never holds a token.
+ *
+ * The overlay UI lives in a separate unlisted script (`overlay-ui.tsx`),
+ * injected by the service worker when the learner opens it. Bundling React and
+ * the cards here cost ~207 ms of main-thread evaluation on every problem page,
+ * so that payload is only paid for once it is actually used.
  */
 
 import { defineContentScript } from "wxt/utils/define-content-script";
-import type { ContentScriptContext } from "wxt/utils/content-script-context";
-import { createShadowRootUi, type ShadowRootContentScriptUi } from "wxt/utils/content-script-ui/shadow-root";
-import { createRoot, type Root } from "react-dom/client";
 
-import "../src/ui/styles.css";
-import { Overlay, refreshUsage, syncMe } from "../src/ui/overlay";
-import { injectFonts } from "../src/ui/fonts";
 import { extractProblem, slugFromUrl, type Rung } from "../src/extraction/ladder";
-import { useLearnerStore } from "../src/state/learner";
 import { log } from "../src/state/client";
-import { prefsStore } from "../src/state/prefs";
 import { flush, track } from "../src/telemetry";
-import type { Theme } from "../src/schemas";
+import type { ProblemBridge } from "../src/ui/overlay-bridge";
 
 const RUNG_LABEL: Record<Rung, string> = {
   embedded: "read from the page's own data",
@@ -28,106 +24,136 @@ const RUNG_LABEL: Record<Rung, string> = {
   manual: "pasted by hand",
 };
 
-let ui: ShadowRootContentScriptUi<Root> | null = null;
+const LAUNCHER_ID = "codementor-launcher";
+
 let currentSlug: string | null = null;
 let extractToken = 0;
 let observer: MutationObserver | null = null;
+let launcher: HTMLButtonElement | null = null;
 
-async function mountOverlay(ctx: ContentScriptContext): Promise<ShadowRootContentScriptUi<Root>> {
-  if (ui) return ui;
-  ui = await createShadowRootUi<Root>(ctx, {
-    name: "codementor-overlay",
-    position: "overlay",
-    alignment: "bottom-right",
-    zIndex: 2_147_483_000,
-    isolateEvents: true,
-    onMount(container: HTMLElement) {
-      const root = createRoot(container);
-      root.render(<Overlay />);
-      void injectFonts(container.getRootNode() as ShadowRoot);
-      return root;
-    },
-    onRemove(root: Root | undefined) {
-      root?.unmount();
-    },
-  });
-  ui.mount();
-  return ui;
+function injectLauncherStyles(): void {
+  if (document.getElementById("codementor-launcher-style")) return;
+  const style = document.createElement("style");
+  style.id = "codementor-launcher-style";
+  style.textContent = `
+    #${LAUNCHER_ID} {
+      all: initial;
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      z-index: 2147483000;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 40px;
+      padding: 0 16px;
+      border: 0;
+      border-radius: 9999px;
+      background: #111827;
+      color: #ffffff;
+      font: 600 13px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.24), 0 1px 2px rgba(0, 0, 0, 0.12);
+      transition: transform 150ms ease, box-shadow 150ms ease;
+    }
+    #${LAUNCHER_ID}:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28), 0 1px 2px rgba(0, 0, 0, 0.12);
+    }
+    #${LAUNCHER_ID}:focus-visible {
+      outline: 2px solid #6366f1;
+      outline-offset: 2px;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${LAUNCHER_ID} { background: #f9fafb; color: #111827; }
+    }
+  `;
+  (document.head ?? document.documentElement).append(style);
 }
 
-function unmountOverlay(): void {
-  ui?.remove();
-  ui = null;
+function showLauncher(): void {
+  // Opening the overlay removes the launcher, and an SPA route change on the
+  // same problem calls this again; do not resurrect it behind the panel.
+  if (window.__codementorUi) return;
+  injectLauncherStyles();
+  if (!launcher) {
+    const button = document.createElement("button");
+    button.id = LAUNCHER_ID;
+    button.type = "button";
+    button.setAttribute("aria-label", "Open CodeMentor");
+    button.innerHTML =
+      '<span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:#22c55e"></span><span>CodeMentor</span>';
+    button.addEventListener("click", () => void openUi());
+    (document.body ?? document.documentElement).append(button);
+    launcher = button;
+  }
 }
 
-/** Follow LeetCode's light/dark and the user's stored preference (§5.5). */
-async function applyTheme(mounted: ShadowRootContentScriptUi<Root>): Promise<void> {
-  const prefs = await prefsStore.getValue();
-  const mode: Theme = prefs.theme;
-  const dark =
-    mode === "dark" ||
-    (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  mounted.shadowHost.classList.toggle("dark", dark);
+function removeLauncher(): void {
+  launcher?.remove();
+  launcher = null;
 }
 
-function watchSystemTheme(): void {
-  window
-    .matchMedia("(prefers-color-scheme: dark)")
-    .addEventListener("change", () => {
-      if (ui) void applyTheme(ui);
-    });
+async function openUi(): Promise<void> {
+  if (window.__codementorUi) {
+    window.__codementorUi.focus();
+    return;
+  }
+  try {
+    const res = (await chrome.runtime.sendMessage({ t: "ui.open" })) as
+      | { ok?: boolean }
+      | undefined;
+    if (!res?.ok) log("warn", "CodeMentor could not open the overlay.");
+  } catch (cause) {
+    log("warn", `CodeMentor could not open the overlay: ${String(cause)}`);
+  }
 }
 
-async function onRouteChange(ctx: ContentScriptContext): Promise<void> {
+function teardown(): void {
+  currentSlug = null;
+  observer?.disconnect();
+  observer = null;
+  window.__codementorUi?.unmount();
+  removeLauncher();
+  delete window.__codementorProblem;
+}
+
+async function onRouteChange(): Promise<void> {
   const slug = slugFromUrl();
 
   if (!slug) {
-    currentSlug = null;
-    observer?.disconnect();
-    observer = null;
-    unmountOverlay();
-    useLearnerStore.getState().reset();
+    teardown();
     return;
   }
 
-  const mounted = await mountOverlay(ctx);
-  await applyTheme(mounted);
+  if (slug === currentSlug) {
+    showLauncher();
+    return;
+  }
 
-  if (slug === currentSlug) return;
   currentSlug = slug;
   extractToken += 1;
   const token = extractToken;
 
-  const store = useLearnerStore.getState();
-  store.reset();
-  store.setPending("extract");
-
   const result = await extractProblem({ slug });
   if (token !== extractToken) return;
 
-  if (!result.problem) {
-    store.setProblem(null, null);
-    useLearnerStore.setState({ stage: "manual", pending: "none" });
-    return;
+  const problem = result.problem ?? null;
+  const note = result.rung ? RUNG_LABEL[result.rung] : null;
+  const bridge: ProblemBridge = { slug, problem, note };
+  window.__codementorProblem = bridge;
+
+  if (problem) {
+    track("problem_detected", {
+      slug,
+      rung: result.rung,
+      quality: problem.extraction_quality,
+    });
   }
 
-  store.setProblem(result.problem, result.rung ? RUNG_LABEL[result.rung] : null);
-  track("problem_detected", {
-    slug,
-    rung: result.rung,
-    quality: result.problem.extraction_quality,
-  });
-
-  try {
-    await refreshUsage();
-  } catch {
-    // Credits are a convenience here. An expired token or network blip must
-    // not strand the extraction spinner or hide the approach list.
-  }
-  useLearnerStore.setState({ pending: "none" });
-
-  const resumed = await store.resumeSession();
-  if (!resumed) await store.loadApproaches();
+  if (window.__codementorUi) window.__codementorUi.setProblem(slug, problem, note);
+  showLauncher();
 }
 
 /**
@@ -147,17 +173,23 @@ function watchDescription(): void {
     const length = target.textContent?.length ?? 0;
     if (Math.abs(length - lastLength) < 200) return;
     lastLength = length;
-    if (slugFromUrl() !== currentSlug) return;
-    useLearnerStore.getState().setPending("extract");
-    void extractProblem({ slug: currentSlug ?? undefined }).then((result) => {
-      if (result.problem) useLearnerStore.getState().setProblem(result.problem);
-      useLearnerStore.setState({ pending: "none" });
+    const slug = currentSlug;
+    if (!slug || slugFromUrl() !== slug) return;
+    void extractProblem({ slug }).then((result) => {
+      // The page can navigate while this extraction is in flight; do not let a
+      // stale result overwrite the newer problem's bridge.
+      if (currentSlug !== slug || slugFromUrl() !== slug) return;
+      const problem = result.problem ?? null;
+      const note = result.rung ? RUNG_LABEL[result.rung] : null;
+      const bridge: ProblemBridge = { slug, problem, note };
+      window.__codementorProblem = bridge;
+      if (problem) window.__codementorUi?.setProblem(slug, problem, note);
     });
   });
   observer.observe(target, { childList: true, subtree: true, characterData: true });
 }
 
-function installHistoryHook(ctx: ContentScriptContext): void {
+function installHistoryHook(): void {
   const push = history.pushState.bind(history);
   const replace = history.replaceState.bind(history);
   let scheduled = false;
@@ -168,7 +200,7 @@ function installHistoryHook(ctx: ContentScriptContext): void {
     // Debounced: the description DOM lands a beat after the route does.
     setTimeout(() => {
       scheduled = false;
-      void onRouteChange(ctx).then(watchDescription);
+      void onRouteChange().then(watchDescription);
     }, 300);
   };
 
@@ -186,33 +218,36 @@ function installHistoryHook(ctx: ContentScriptContext): void {
 export default defineContentScript({
   matches: ["https://leetcode.com/problems/*"],
   runAt: "document_idle",
-  // Styles are scoped to our shadow root, not injected into leetcode.com (§5.1).
-  cssInjectionMode: "ui",
 
-  main(ctx) {
-    installHistoryHook(ctx);
-    watchSystemTheme();
+  main() {
+    installHistoryHook();
+
+    window.__codementorRemoveLauncher = removeLauncher;
+    window.__codementorShowLauncher = showLauncher;
+
+    // Debug helpers for diagnosing in the browser console on leetcode.com.
+    // The overlay script replaces `state` and `prefs` once it is injected.
+    window.__codementorDebug = {
+      slug: () => slugFromUrl(),
+      state: () => undefined,
+      prefs: () => undefined,
+      mounted: () => Boolean(window.__codementorUi),
+      open: () => openUi(),
+      close: () => window.__codementorUi?.unmount(),
+      extract: () => extractProblem({ slug: slugFromUrl() ?? undefined }),
+    };
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") void flush();
     });
 
-    // Keep the credit chip and the language honest without polling: revalidate
-    // whenever the tab regains focus, which is also when preferences get
-    // re-checked against `prefs_version` (§16.2, §5.6).
-    window.addEventListener("focus", () => {
-      void syncMe().catch(() => undefined);
-    });
-
-    void onRouteChange(ctx).then(watchDescription);
-
-    syncMe().catch((cause) => log("info", `Not signed in yet: ${String(cause)}`));
+    void onRouteChange().then(watchDescription);
 
     // WXT calls this when the content script is torn down.
     return () => {
       observer?.disconnect();
       observer = null;
-      unmountOverlay();
+      removeLauncher();
       void flush();
     };
   },

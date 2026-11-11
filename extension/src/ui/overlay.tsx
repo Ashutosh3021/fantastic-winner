@@ -32,7 +32,7 @@ import {
 } from "../state/prefs";
 import type { Language } from "../schemas";
 import { strings } from "../i18n/strings";
-import { flush, track } from "../telemetry";
+import { track } from "../telemetry";
 
 import { ApproachListCard } from "./cards/approach-list-card";
 import { ChecklistCard } from "./cards/checklist-card";
@@ -223,7 +223,7 @@ export function Overlay() {
                   aria-label="Working"
                   className="cm-busy-bar absolute inset-x-0 top-0 h-0.5 origin-left overflow-hidden bg-primary/15"
                 >
-                  <div className="h-full w-1/3 animate-[cm-indeterminate_1.1s_cubic-bezier(0.4,0,0.2,1)_infinite] bg-primary" />
+                  <div className="h-full w-1/3 animate-[cm-indeterminate_2s_cubic-bezier(0.4,0,0.2,1)_infinite] bg-primary" />
                 </div>
               )}
               <span className="sr-only" aria-live="polite">
@@ -438,12 +438,6 @@ function ManualPaste({ language }: { language: Language }) {
       </div>
     </div>
   );
-}
-
-/** Re-read credits after any card mutates them. */
-export async function refreshUsage(): Promise<void> {
-  await useLearnerStore.getState().refreshUsage();
-  void flush();
 }
 
 /**

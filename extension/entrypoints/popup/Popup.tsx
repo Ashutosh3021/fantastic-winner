@@ -162,6 +162,26 @@ export function Popup() {
     void load();
   }, [load]);
 
+  // The popup is its own document. Auth can change out from under it when the
+  // user signs in on a browser tab (the hosted OAuth flow completes there).
+  // Listen for state pushes from the service worker and re-validate on focus
+  // so the "signed in / not signed in" UI never lies.
+  useEffect(() => {
+    const onMessage = (raw: unknown) => {
+      const msg = raw as { t?: string } | undefined;
+      if (msg?.t === "auth.changed") void load();
+    };
+    chrome.runtime.onMessage.addListener(onMessage as any);
+
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      chrome.runtime.onMessage.removeListener(onMessage as any);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [load]);
+
   // Land on the most useful tab once we know whether there is an account.
   useEffect(() => {
     setTab(authState?.signedIn ? "progress" : "account");
@@ -519,14 +539,25 @@ function AiKeySection({
       toast("Paste a complete API key first.");
       return;
     }
+    // Guard: you must be signed in to associate a key with your account.
+    const state = await auth.state();
+    if (!state.ok || !state.data.signedIn) {
+      toast("Sign in before saving an API key.");
+      return;
+    }
     setSaving(true);
     try {
       const res = await api("aiKeyPut", { body: { provider, api_key: trimmed } });
       onChange(res.data);
       setKey("");
       toast("Key saved on the server.");
-    } catch {
-      toast("Could not save that key. Nothing was changed.");
+    } catch (cause: any) {
+      // Surface the real error so it can be diagnosed instead of a blank
+      // "Nothing was changed" toast.
+      const code = cause?.code ?? "unknown";
+      const message = cause?.message ?? "Could not save that key.";
+      console.error("[codementor:aiKey] save failed", { code, message, cause });
+      toast(code === "unauthorized" ? "Sign in expired. Sign in again." : message);
     } finally {
       setSaving(false);
     }

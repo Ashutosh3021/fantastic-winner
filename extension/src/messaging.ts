@@ -24,7 +24,9 @@ export type AuthMessage =
 
 export type LogMessage = { t: "log"; level: "info" | "warn" | "error"; msg: string };
 
-export type Msg = ApiMessage | AuthMessage | LogMessage;
+export type UiMessage = { t: "ui.open" };
+
+export type Msg = ApiMessage | AuthMessage | LogMessage | UiMessage;
 
 export type ResMeta = {
   cached: boolean;

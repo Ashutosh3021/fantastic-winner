@@ -71,7 +71,7 @@ export default defineConfig({
     // without a `_locales` subtree makes Chrome refuse to load the extension
     // ("Default locale was specified, but _locales subtree is missing").
 
-    permissions: ["storage"],
+    permissions: ["storage", "scripting"],
 
     host_permissions: ["https://leetcode.com/*", `${API_BASE_URL}/*`],
 
@@ -83,6 +83,12 @@ export default defineConfig({
     web_accessible_resources: [
       {
         resources: ["fonts/*"],
+        matches: ["https://leetcode.com/*"],
+      },
+      {
+        // Fetched by the on-demand overlay script, never injected into the page.
+        resources: ["assets/overlay-styles.css"],
+        use_dynamic_url: true,
         matches: ["https://leetcode.com/*"],
       },
     ],

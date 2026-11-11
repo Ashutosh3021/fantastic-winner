@@ -99,7 +99,7 @@ export default defineBackground(() => {
     return true;
   });
 
-  chrome.runtime.onMessage.addListener((raw: unknown, _sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
     const msg = raw as Msg;
     if (!msg || typeof msg.t !== "string") return false;
 
@@ -107,11 +107,26 @@ export default defineBackground(() => {
       switch (msg.t) {
         case "api":
           return handleApi(msg);
-        case "auth.login":
-          return { ok: true, data: await login(msg.provider), meta: toResMeta({}) };
-        case "auth.logout":
-          await logout();
+        case "ui.open": {
+          const tabId = sender.tab?.id;
+          if (tabId === undefined) throw new Error("The overlay can only open from a tab.");
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ["overlay-ui.js"],
+          });
           return { ok: true, data: null, meta: toResMeta({}) };
+        }
+        case "auth.login": {
+          const data = await login(msg.provider);
+          // Tell any open popups to re-validate their auth UI.
+          chrome.runtime.sendMessage({ t: "auth.changed" }).catch(() => undefined);
+          return { ok: true, data, meta: toResMeta({}) };
+        }
+        case "auth.logout": {
+          await logout();
+          chrome.runtime.sendMessage({ t: "auth.changed" }).catch(() => undefined);
+          return { ok: true, data: null, meta: toResMeta({}) };
+        }
         case "auth.state":
           return { ok: true, data: await authState(), meta: toResMeta({}) };
         case "log":

@@ -48,11 +48,15 @@ test("signed-in popup and the full learning loop", async () => {
 
     const page = await context.newPage();
     await page.goto("https://leetcode.com/problems/two-sum/");
+    // The overlay is injected on demand, so the launcher is the entry point.
+    await page.locator("#codementor-launcher").click();
     const overlay = page.getByRole("complementary", { name: "CodeMentor" });
 
     await expect(overlay.getByRole("heading", { name: "Two Sum" })).toBeVisible({
       timeout: 30_000,
     });
+    // Proves the shadow-root stylesheet was fetched from the extension origin.
+    await expect(overlay).toHaveCSS("width", "352px");
     await overlay.getByRole("button", { name: /Brute Force/ }).click();
     await expect(
       overlay.getByRole("heading", { name: "Brute Force Walkthrough" }),
@@ -91,6 +95,7 @@ test("signed-in popup and the full learning loop", async () => {
     await expect(overlay.getByText(prompt)).toBeVisible();
 
     await page.reload();
+    await page.locator("#codementor-launcher").click();
     await expect(overlay.getByText(prompt)).toBeVisible({ timeout: 30_000 });
 
     await overlay.getByRole("button", { name: /Need a hint/ }).click();

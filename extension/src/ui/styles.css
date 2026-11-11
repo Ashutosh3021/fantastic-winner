@@ -275,22 +275,19 @@
     overflow-x: auto;
   }
 
-  /* The one entrance animation in the product. It runs once, for 240ms, on the
-     panel itself, and prefers-reduced-motion neutralises it via the base rule
-     above rather than needing its own query. */
+  /* One entrance animation in the product. Subtle opacity only — no lift, no
+     bounce, no spring. Runs once on the panel. */
   .cm-rise {
-    animation: cm-rise var(--duration-panel) var(--ease-out) both;
+    animation: cm-rise var(--duration-ui) var(--ease-out) both;
   }
 }
 
 @keyframes cm-rise {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
 
@@ -312,15 +309,13 @@
   }
 }
 
-/* Menus and dialogs. A 2px lift plus opacity — no scale bounce, no spring. */
+/* Menus and dialogs. Opacity only — no lift, no spring. */
 @keyframes cm-pop {
   from {
     opacity: 0;
-    transform: translateY(-2px);
   }
   to {
     opacity: 1;
-    transform: none;
   }
 }
 
@@ -351,14 +346,14 @@
   }
 }
 
-/* Indeterminate work indicator. Transform-only, and it disappears entirely
-   under reduced motion rather than just slowing down. */
+/* Indeterminate work indicator. Slow, subtle sweep; disappears under
+   reduced motion. */
 @keyframes cm-indeterminate {
   from {
-    transform: translateX(-100%);
+    transform: translateX(-25%);
   }
   to {
-    transform: translateX(320%);
+    transform: translateX(100%);
   }
 }
 
