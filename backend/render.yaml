@@ -36,8 +36,9 @@ services:
       # here; it is never committed.
       - key: PYRONITES_KEY
         sync: false
-      # Fernet key for stored BYOK credentials. Optional for boot, but the
-      # /account/ai-key routes fail closed (503) when it is absent.
+      # Fernet key for stored BYOK credentials. When blank the service derives
+      # one from PYRONITES_KEY; set it explicitly if that secret is ever rotated,
+      # since rotation makes previously saved credentials unreadable.
       - key: BYOK_ENCRYPTION_KEY
         sync: false
       - key: PYRONITES_AUTO_MIGRATE

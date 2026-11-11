@@ -101,6 +101,8 @@ export function fallbackMessage(code: ErrorCode): string {
       return "The answer ran past its length budget. Nothing was charged.";
     case "ai_unavailable":
       return "The mentor is unavailable right now. Nothing was charged.";
+    case "byok_unavailable":
+      return "This server cannot store a personal key right now.";
     case "ai_busy":
       return "The mentor is busy. Try again in a moment.";
     case "degraded_mode":

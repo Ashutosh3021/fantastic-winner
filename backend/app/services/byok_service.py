@@ -5,16 +5,20 @@ the request body and :meth:`ByokService.save`, and between decryption and the
 provider call. Everything that persists, logs or returns is either ciphertext or
 a four-character hint.
 
-Fail-closed behaviour: if ``BYOK_ENCRYPTION_KEY`` is missing or malformed, the
-BYOK routes raise ``byok_unavailable``. The rest of the app keeps running, which
-is the same trade the provider-key configuration makes elsewhere.
+Fail-closed behaviour: if ``BYOK_ENCRYPTION_KEY`` is missing and there is no
+secret to derive one from, the BYOK routes raise ``byok_unavailable``. The rest
+of the app keeps running, which is the same trade the provider-key
+configuration makes elsewhere.
 """
 
 from __future__ import annotations
 
+import base64
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from ..core.config import ByokConfig
 from ..core.errors import BadRequest, ByokUnavailable
@@ -22,6 +26,13 @@ from ..core.logging import get_logger
 from ..repositories.store import UserAICredentialRepository
 
 logger = get_logger(__name__)
+
+#: Domain separation for the derived key. Changing it makes every stored
+#: credential unreadable, which is the same consequence as rotating the key.
+_KDF_SALT = b"codementor.byok.v1"
+_KDF_INFO = b"fernet-key"
+
+_derivation_warned = False
 
 ALLOWED_PROVIDERS = ("openai", "anthropic", "gemini")
 
@@ -40,18 +51,39 @@ class ByokService:
     # -- encryption ---
 
     def _fernet(self) -> Fernet:
-        if not self.config.configured:
-            raise ByokUnavailable(
-                "Saving your own API key is not available on this server yet."
-            )
+        key = self._key_material()
         try:
-            return Fernet(self.config.encryption_key.encode("ascii"))
+            return Fernet(key.encode("ascii"))
         except (ValueError, TypeError) as exc:
             # Never include the configured value in the error or the log.
             logger.error("BYOK_ENCRYPTION_KEY is not a valid Fernet key")
             raise ByokUnavailable(
                 "Saving your own API key is not available on this server yet."
             ) from exc
+
+    def _key_material(self) -> str:
+        if self.config.encryption_key:
+            return self.config.encryption_key
+        if not self.config.fallback_secret:
+            raise ByokUnavailable(
+                "Saving your own API key is not available on this server yet."
+            )
+
+        global _derivation_warned
+        if not _derivation_warned:
+            logger.warning(
+                "BYOK_ENCRYPTION_KEY is unset; deriving one from PYRONITES_KEY. "
+                "Set BYOK_ENCRYPTION_KEY explicitly so rotating the datastore key "
+                "does not orphan saved credentials."
+            )
+            _derivation_warned = True
+        derived = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=_KDF_SALT,
+            info=_KDF_INFO,
+        ).derive(self.config.fallback_secret.encode("utf-8"))
+        return base64.urlsafe_b64encode(derived).decode("ascii")
 
     def encrypt(self, api_key: str) -> str:
         return self._fernet().encrypt(api_key.encode("utf-8")).decode("ascii")

@@ -254,14 +254,20 @@ class ByokConfig:
     ``encryption_key`` is a Fernet key: 32 urlsafe-base64 bytes. It is read at
     request time rather than import time, so a deployment without it still
     starts and only the BYOK routes fail closed.
+
+    When ``encryption_key`` is blank but ``fallback_secret`` is set, the service
+    derives a purpose-bound Fernet key from that secret instead of disabling
+    BYOK. Deployments already carry the high-entropy datastore key, so this
+    keeps the feature available without a second secret to provision by hand.
     """
 
     encryption_key: str = ""
     max_cached_providers: int = 64
+    fallback_secret: str = ""
 
     @property
     def configured(self) -> bool:
-        return bool(self.encryption_key)
+        return bool(self.encryption_key or self.fallback_secret)
 
 @dataclass(frozen=True)
 class ProviderKeys:
@@ -431,6 +437,7 @@ def get_settings() -> Settings:
         byok=ByokConfig(
             encryption_key=_env("BYOK_ENCRYPTION_KEY"),
             max_cached_providers=_env_int("BYOK_MAX_CACHED_PROVIDERS", 64),
+            fallback_secret=_env("PYRONITES_KEY"),
         ),
         daily_spend_cap_usd=_env_float("DAILY_AI_SPEND_CAP_USD", 0.0),
         spend_alert_fraction=_env_float("SPEND_ALERT_FRACTION", 0.8),

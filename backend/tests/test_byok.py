@@ -89,6 +89,32 @@ class TestEncryption:
         with pytest.raises(ByokUnavailable):
             await service.save(user_id="u1", provider="openai", api_key=USER_KEY)
 
+    async def test_fallback_secret_keeps_byok_available(self) -> None:
+        repo = _StubCredentialRepo()
+        config = ByokConfig(fallback_secret="pyro_live_example")
+        service = ByokService(repo, config)
+
+        view = await service.save(user_id="u1", provider="openai", api_key=USER_KEY)
+
+        assert view["hint"] == "1234"
+        assert service.decrypt(repo.rows["u1"]["key_ciphertext"]) == USER_KEY
+
+        # The derived key is stable, so a second service instance reads the row.
+        reloaded = ByokService(_StubCredentialRepo(), config)
+        assert reloaded.decrypt(repo.rows["u1"]["key_ciphertext"]) == USER_KEY
+
+    async def test_explicit_key_wins_over_the_fallback_secret(self) -> None:
+        key = Fernet.generate_key().decode()
+        repo = _StubCredentialRepo()
+        explicit = ByokService(repo, ByokConfig(encryption_key=key, fallback_secret="ignored"))
+        await explicit.save(user_id="u1", provider="openai", api_key=USER_KEY)
+
+        derived = ByokService(
+            _StubCredentialRepo(), ByokConfig(fallback_secret="ignored")
+        )
+        with pytest.raises(ByokUnavailable):
+            derived.decrypt(repo.rows["u1"]["key_ciphertext"])
+
     async def test_malformed_encryption_key_fails_closed(self) -> None:
         service = ByokService(_StubCredentialRepo(), ByokConfig(encryption_key="nope"))
         with pytest.raises(ByokUnavailable):

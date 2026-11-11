@@ -16,6 +16,7 @@ export const ERROR_CODES = [
   "checklist_locked",
   "ai_busy",
   "ai_unavailable",
+  "byok_unavailable",
   "ai_output_truncated",
   "ai_invalid_output",
   "degraded_mode",

@@ -213,7 +213,10 @@ export function Popup() {
     }
   }
 
-  if (!prefs) return <PopupSkeleton />;
+  // Render the skeleton until auth resolves, not just until prefs do. Prefs
+  // load first, so gating on them alone painted a "Not signed in" panel for a
+  // beat even with a valid session, which invited a second click.
+  if (!prefs || authState === null) return <PopupSkeleton />;
 
   const signedIn = authState?.signedIn === true;
 
@@ -551,12 +554,16 @@ function AiKeySection({
       onChange(res.data);
       setKey("");
       toast("Key saved on the server.");
-    } catch (cause: any) {
-      // Surface the real error so it can be diagnosed instead of a blank
-      // "Nothing was changed" toast.
-      const code = cause?.code ?? "unknown";
-      const message = cause?.message ?? "Could not save that key.";
-      console.error("[codementor:aiKey] save failed", { code, message, cause });
+    } catch (cause: unknown) {
+      // Log the fields that identify the failure; the raw object alone prints
+      // as "[object Object]" and tells you nothing.
+      const err = cause as { code?: string; message?: string; status?: number };
+      const code = err?.code ?? "unknown";
+      const message = err?.message || "Could not save that key.";
+      console.error(
+        `[codementor:aiKey] save failed (${code}${err?.status ? ` ${err.status}` : ""}): ${message}`,
+        cause,
+      );
       toast(code === "unauthorized" ? "Sign in expired. Sign in again." : message);
     } finally {
       setSaving(false);
