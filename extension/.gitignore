@@ -12,3 +12,6 @@ playwright-report/
 # private signing key stays local; built extension is tracked
 *.pem
 keys/
+
+# Chrome user-data dir left behind by manual CRX packing
+.output/pack-profile/
