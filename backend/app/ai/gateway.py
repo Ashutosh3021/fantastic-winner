@@ -54,6 +54,32 @@ from .providers import (
 
 logger = get_logger(__name__)
 
+
+def _parse_json(text: str) -> Any:
+    """Parse a model reply, tolerating the wrappers models like to add.
+
+    Even with ``response_format=json_object`` some providers return a fenced
+    block or a sentence before the object. Rejecting those as invalid output
+    wastes the learner's tokens, so strip the fence and, failing that, take the
+    outermost ``{...}`` before giving up.
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start != -1 and end > start:
+            return json.loads(cleaned[start : end + 1])
+        raise
+
+
 #: Own-key providers reuse the existing HTTP classes. Nothing else changes:
 #: the key is a constructor argument, not a new provider implementation.
 _PROVIDER_CLASSES: dict[
@@ -550,13 +576,25 @@ class AIGateway:
 
     async def _validate(self, spec: TaskSpec, attempt: _Attempt) -> Any | None:
         try:
-            payload = json.loads(attempt.result.text)
+            payload = _parse_json(attempt.result.text)
         except json.JSONDecodeError:
+            logger.warning(
+                "unparseable JSON from %s for %s: %r",
+                attempt.provider,
+                spec.task_id,
+                attempt.result.text[:200],
+            )
             return None
         if spec.adapter is not None:
             try:
                 return spec.adapter(payload)
-            except (ValidationError, ValueError, KeyError, TypeError):
+            except (ValidationError, ValueError, KeyError, TypeError) as exc:
+                logger.warning(
+                    "schema mismatch from %s for %s: %s",
+                    attempt.provider,
+                    spec.task_id,
+                    str(exc)[:300],
+                )
                 return None
         return payload
 
@@ -600,13 +638,25 @@ class AIGateway:
         if retry.finish_reason == FinishReason.LENGTH:
             return None
         try:
-            payload = json.loads(retry.text)
+            payload = _parse_json(retry.text)
         except json.JSONDecodeError:
+            logger.warning(
+                "unparseable repair from %s for %s: %r",
+                provider.name,
+                spec.task_id,
+                retry.text[:200],
+            )
             return None
         if spec.adapter is not None:
             try:
                 spec.adapter(payload)
-            except (ValidationError, ValueError, KeyError, TypeError):
+            except (ValidationError, ValueError, KeyError, TypeError) as exc:
+                logger.warning(
+                    "repair schema mismatch from %s for %s: %s",
+                    provider.name,
+                    spec.task_id,
+                    str(exc)[:300],
+                )
                 return None
         return _Attempt(
             provider=provider.name,

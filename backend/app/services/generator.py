@@ -155,18 +155,12 @@ class ContentGenerator:
         key = request.cache_key_input()
 
         cached = await self.cache.lookup(key)
-        if cached.negative:
-            # A cached outage or key failure was recorded before this learner
-            # supplied (or replaced) their own key. Their retry costs CodeMentor
-            # nothing, and honouring the entry would keep a fixed key looking
-            # broken until the negative TTL expired.
-            if runtime.current_context().own_key and cached.error_code in (
-                "ai_unavailable",
-                "ai_key_rejected",
-            ):
-                pass
-            else:
-                raise _cached_error(cached.error_code)
+        # A cached failure may describe a different provider or model than the
+        # one this learner just configured, and with an own key they pay for the
+        # retry. Honor negative entries only for the shared server key, where
+        # the retry really would be money down the drain.
+        if cached.negative and not runtime.current_context().own_key:
+            raise _cached_error(cached.error_code)
         if cached.hit:
             return GenerateOutcome(
                 payload=cached.payload, cached=True, cache_key=cache_key_str(key)
@@ -210,7 +204,13 @@ class ContentGenerator:
             # Terminal for this key: remember it so nobody re-pays to rediscover.
             await self.cache.store_negative(key, error_code=exc.code)
             raise
-        except AiInvalidOutput:
+        except AiInvalidOutput as exc:
+            logger.warning(
+                "quality check rejected %s for %s: %s",
+                artifact,
+                request.task_id,
+                exc,
+            )
             await self.cache.store_negative(key, error_code="ai_invalid_output")
             raise
         except Exception as exc:

@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from app.ai import runtime
 from app.ai.gateway import AIGateway, TaskSpec
-from app.ai.providers import ProviderError
+from app.ai.providers import ProviderError, ProviderResult
 from app.api.routers.learning import _spend_credit
 from app.core.config import ByokConfig, ProviderKeys, Settings
 from app.core.errors import (
@@ -283,6 +283,24 @@ class _MissingModelProvider(_RecordingProvider):
         raise ProviderError("gemini: HTTP 404", retryable=False, status=404)
 
 
+class _FencedJsonProvider(_RecordingProvider):
+    calls: ClassVar[int] = 0
+
+    async def generate_json(self, **_: Any) -> Any:
+        type(self).calls += 1
+        return ProviderResult(text='```json\n{"answer": 42}\n```', tokens_in=3, tokens_out=4)
+
+
+class _FencedOnRepairProvider(_RecordingProvider):
+    calls: ClassVar[int] = 0
+
+    async def generate_json(self, **_: Any) -> Any:
+        type(self).calls += 1
+        if type(self).calls == 1:
+            return ProviderResult(text="Here you go: not json")
+        return ProviderResult(text='```json\n{"answer": 7}\n```', tokens_in=3, tokens_out=4)
+
+
 class TestOwnKeyRouting:
     async def test_own_key_does_not_fall_back_to_the_server_key(
         self, monkeypatch: pytest.MonkeyPatch
@@ -384,6 +402,36 @@ class TestOwnKeyRouting:
 
         await gateway.forget_own_key(USER_KEY)
         assert gateway._byok_providers == {}
+        await gateway.aclose()
+
+    async def test_fenced_json_from_the_provider_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _FencedJsonProvider.calls = 0
+        monkeypatch.setattr(
+            "app.ai.gateway._PROVIDER_CLASSES", {"openai": _FencedJsonProvider}
+        )
+        gateway = AIGateway(_settings())
+
+        result = await gateway.run(_spec(), api_key=USER_KEY, provider="openai")
+
+        assert result.payload == {"answer": 42}
+        assert _FencedJsonProvider.calls == 1
+        await gateway.aclose()
+
+    async def test_repair_accepts_fenced_json(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _FencedOnRepairProvider.calls = 0
+        monkeypatch.setattr(
+            "app.ai.gateway._PROVIDER_CLASSES", {"openai": _FencedOnRepairProvider}
+        )
+        gateway = AIGateway(_settings())
+
+        result = await gateway.run(_spec(), api_key=USER_KEY, provider="openai")
+
+        assert result.payload == {"answer": 7}
+        assert _FencedOnRepairProvider.calls == 2
         await gateway.aclose()
 
 
