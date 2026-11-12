@@ -23,7 +23,7 @@ from ..ai.gateway import AIGateway
 from ..cache.store import ContentCache
 from ..core.config import Settings, get_settings
 from ..core.logging import get_logger
-from ..migrations.runner import run_migrations
+from ..migrations.runner import ensure_schema, refresh_schema, run_migrations
 from ..ratelimit.limiter import InProcessRateLimiter
 from ..repositories.gateway import PyronitesGateway
 from ..repositories.store import (
@@ -124,6 +124,20 @@ class Container:
                 logger.info("migrations applied: %s", ", ".join(applied))
             else:
                 logger.info("schema already current")
+        else:
+            try:
+                await refresh_schema(self.gateway)
+            except Exception as exc:
+                logger.warning("could not read the schema version: %s", exc)
+
+        # Auto-migrate can be off on purpose (release-command deployments), but a
+        # table created before this build's providers must not keep failing
+        # writes. The probe is read-only; it only writes when it finds a stale
+        # credential table.
+        try:
+            await ensure_schema(self.gateway)
+        except Exception as exc:
+            logger.warning("schema repair at boot failed: %s", exc)
 
         # The projector is best-effort: if the loop cannot start, requests still
         # work and the queue drains on the next boot.

@@ -8,9 +8,12 @@
 #   render secret set PYRONITES_KEY=pyro_live_...
 #   render secret set AI_ANTHROPIC_KEY=sk-ant-...
 #
-# Run migrations as a separate step rather than at boot on a web service:
-#   render exec codementor-api python scripts/migrate.py
-# then set PYRONITES_AUTO_MIGRATE=false so two instances cannot race.
+# Migrations are ledgered, so a boot can apply only what is missing. Running
+# them at boot is deliberate: a deploy that serves against an older schema
+# surfaces as an opaque datastore 400 in the one route that touches the new
+# column, and a manual `render exec` step had already been skipped once.
+# If the service ever scales past one instance, run migrations as a release
+# command and set PYRONITES_AUTO_MIGRATE=false again.
 
 services:
   - type: web
@@ -42,7 +45,7 @@ services:
       - key: BYOK_ENCRYPTION_KEY
         sync: false
       - key: PYRONITES_AUTO_MIGRATE
-        value: "false"
+        value: "true"
       - key: PYRONITES_TIMEOUT_S
         value: "30"
       # One proxy in front of the service, so a spoofed X-Forwarded-For cannot

@@ -30,6 +30,7 @@ from .api.routers import account, auth, learning, progress
 from .core.config import get_settings
 from .core.errors import AppError
 from .core.logging import configure_logging, get_logger, set_request_id
+from .migrations import runner as migrations
 
 logger = get_logger(__name__)
 
@@ -223,6 +224,10 @@ def create_app() -> FastAPI:
             # Render sets this at build time, so a deploy can be confirmed from
             # outside without guessing from restart timing.
             "revision": (os.environ.get("RENDER_GIT_COMMIT") or "dev")[:7],
+            # Proves which schema this process is serving. A revision that is
+            # current with an old schema is exactly the state that produced an
+            # opaque datastore 400 on the first save for a new provider.
+            "schema": migrations.current_schema,
         }
 
     app.include_router(auth.router, prefix=API_PREFIX)

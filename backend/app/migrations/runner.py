@@ -32,6 +32,16 @@ CREATE TABLE IF NOT EXISTS {safe_identifier(LEDGER_TABLE)} (
 
 _FILENAME_RE = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 
+#: Highest version known to be applied in this process. ``/health`` reports it
+#: so an operator can confirm a deploy without direct datastore access.
+current_schema = "0000"
+
+
+def _record(versions: set[str]) -> str:
+    global current_schema
+    current_schema = max(versions | {"0000"})
+    return current_schema
+
 @dataclass(frozen=True)
 class Migration:
     version: str
@@ -96,6 +106,38 @@ async def applied_versions(gateway: PyronitesGateway) -> set[str]:
     rows = await gateway.query_all(f"SELECT version FROM {safe_identifier(LEDGER_TABLE)}")
     return {str(row["version"]) for row in rows}
 
+
+async def refresh_schema(gateway: PyronitesGateway) -> str:
+    """Read the applied version without writing anything beyond the ledger DDL."""
+    return _record(await applied_versions(gateway))
+
+
+async def ensure_schema(gateway: PyronitesGateway) -> list[str]:
+    """Apply pending migrations when a probe finds a table this build can't use.
+
+    Runs even when ``PYRONITES_AUTO_MIGRATE`` is off. The credential table was
+    created with a provider CHECK; a boot that skipped migrations then rejected
+    every save for a newer provider with an opaque datastore 400. The probe is
+    read-only and the repair is a normal ledgered migration.
+    """
+    try:
+        rows = await gateway.query_all(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'user_ai_credentials'"
+        )
+    except Exception as exc:  # pragma: no cover - depends on datastore internals
+        logger.warning("schema probe unavailable: %s", exc)
+        return []
+
+    ddl = str(rows[0].get("sql") or "") if rows else ""
+    if "CHECK (provider IN" not in ddl:
+        return []
+
+    applied = await run_migrations(gateway)
+    if applied:
+        logger.info("schema repaired at boot: %s", ", ".join(applied))
+    return applied
+
 async def run_migrations(
     gateway: PyronitesGateway,
     *,
@@ -130,4 +172,5 @@ async def run_migrations(
 
     if applied:
         logger.info("schema at version %s", migrations[-1].version)
+    _record(done | set(applied))
     return applied

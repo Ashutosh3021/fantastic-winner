@@ -119,13 +119,13 @@ fly deploy          # runs "python scripts/migrate.py" as the release command
 ### Render
 
 Push, then connect the blueprint in the dashboard. Set the `sync: false`
-variables as dashboard secrets. Then:
+variables as dashboard secrets. Migrations run at boot (`PYRONITES_AUTO_MIGRATE`
+is `true` in `render.yaml`), so a deploy cannot serve code against an older
+schema. Confirm both with:
 
 ```bash
-render exec codementor-api python scripts/migrate.py
+curl https://<service>/health   # revision and schema
 ```
-
-and set `PYRONITES_AUTO_MIGRATE=false` so a later restart cannot re-apply.
 
 ### Docker
 
