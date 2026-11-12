@@ -8,17 +8,23 @@ providers and was paying for the retry with their own key.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
+from pydantic import BaseModel
 
 from app.ai import runtime
 from app.ai.gateway import GatewayResult
 from app.cache.store import CacheLookup
 from app.core.errors import AiInvalidOutput
-from app.services.generator import ContentGenerator, GenerateRequest
+from app.services.generator import ContentGenerator, GenerateRequest, collect_artifact_texts
 
 KEY = "sk-own-key-1234"
+
+
+class _Card(BaseModel):
+    summary: str
 
 
 class _Cache:
@@ -36,6 +42,7 @@ class _Cache:
     async def store(
         self, key: Any, *, payload: Any, tokens_in: int = 0, tokens_out: int = 0
     ) -> None:
+        json.dumps(payload)
         self.stored.append(payload)
 
     async def store_negative(self, key: Any, *, error_code: str) -> None:
@@ -56,8 +63,13 @@ class _Gateway:
 
     async def run(self, spec: Any) -> GatewayResult:
         self.calls += 1
+        payload = (
+            spec.adapter({"summary": "A useful way to think about it."})
+            if spec.adapter is not None
+            else {"summary": "A useful way to think about it."}
+        )
         return GatewayResult(
-            payload={"summary": "A useful way to think about it."},
+            payload=payload,
             provider="openai",
             model="test",
             tokens_in=1,
@@ -78,7 +90,7 @@ def _request() -> GenerateRequest:
         language="python",
         mode="beginner",
         schema={"type": "object"},
-        adapter=None,
+        adapter=_Card.model_validate,
         tier="fast",
         temperature=0.0,
         max_tokens=64,
@@ -110,7 +122,39 @@ async def test_own_key_ignores_a_cached_invalid_output() -> None:
     )
 
     assert gateway.calls == 1
-    assert outcome.payload["summary"]
+    assert outcome.payload.summary
+
+
+async def test_model_payloads_are_stored_as_json_objects() -> None:
+    _, _, cache = await _generate(CacheLookup(), own_key=True)
+
+    assert cache.stored == [{"summary": "A useful way to think about it."}]
+
+
+def test_collect_artifact_texts_reads_pydantic_models() -> None:
+    assert collect_artifact_texts(_Card(summary="hello"), "analysis_fragments") == [
+        "hello"
+    ]
+
+
+async def test_cache_hits_are_revalidated_into_the_adapter_type() -> None:
+    outcome, gateway, _ = await _generate(
+        CacheLookup(hit=True, payload={"summary": "cached"}), own_key=True
+    )
+
+    assert gateway.calls == 0
+    assert isinstance(outcome.payload, _Card)
+    assert outcome.payload.summary == "cached"
+
+
+async def test_a_stale_cache_hit_is_regenerated() -> None:
+    outcome, gateway, cache = await _generate(
+        CacheLookup(hit=True, payload={"nope": 1}), own_key=True
+    )
+
+    assert gateway.calls == 1
+    assert outcome.payload.summary
+    assert cache.stored == [{"summary": "A useful way to think about it."}]
 
 
 async def test_server_key_still_honors_a_cached_invalid_output() -> None:

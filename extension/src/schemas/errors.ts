@@ -27,6 +27,7 @@ export const ERROR_CODES = [
   "timeout",
   "context_invalidated",
   "invalid_response",
+  "internal_error",
   "unknown",
 ] as const;
 
@@ -40,5 +41,6 @@ export const apiErrorSchema = z.object({
   reset_at: z.string().optional(),
   route_class: z.string().optional(),
   shortfall: z.number().int().min(0).optional(),
+  request_id: z.string().optional(),
 });
 export type ApiError = z.infer<typeof apiErrorSchema>;

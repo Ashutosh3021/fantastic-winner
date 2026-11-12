@@ -53,7 +53,10 @@ export function ErrorCard({
                 ? "Your AI provider rejected the request"
                 : "Something interrupted that"}
         </CardTitle>
-        <p className="font-mono text-[11px] text-muted-foreground/80">{error.code}</p>
+        <p className="font-mono text-[11px] text-muted-foreground/80">
+          {error.code}
+          {error.request_id ? ` · ${error.request_id}` : ""}
+        </p>
       </CardHeader>
 
       <CardContent>

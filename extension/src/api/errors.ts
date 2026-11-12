@@ -36,6 +36,7 @@ export class ApiFailure extends Error {
       ...(this.retryAfterSec !== undefined ? { retry_after_sec: this.retryAfterSec } : {}),
       ...(this.resetAt !== undefined ? { reset_at: this.resetAt } : {}),
       ...(this.shortfall !== undefined ? { shortfall: this.shortfall } : {}),
+      ...(this.requestId !== undefined ? { request_id: this.requestId } : {}),
     };
   }
 }
@@ -115,6 +116,8 @@ export function fallbackMessage(code: ErrorCode): string {
       return "Update the CodeMentor extension to keep going.";
     case "generation_in_progress":
       return "That is already being generated.";
+    case "internal_error":
+      return "Something went wrong on our side.";
     default:
       return "Something went wrong.";
   }

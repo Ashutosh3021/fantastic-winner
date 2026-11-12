@@ -109,6 +109,10 @@ def collect_artifact_texts(payload: Any, artifact: str) -> list[str]:
                 "items", "quote", "why_it_fits", "learning_goal",
             }:
                 texts.append(node)
+        elif isinstance(node, BaseModel):
+            # Adapters return models, not dicts. Walking the model is what keeps
+            # the leak policy from silently seeing an empty artifact.
+            walk(node.model_dump(), key)
         elif isinstance(node, dict):
             for child_key, value in node.items():
                 walk(value, child_key)
@@ -122,6 +126,11 @@ def collect_artifact_texts(payload: Any, artifact: str) -> list[str]:
             if isinstance(item, str):
                 texts.append(item)
     return texts
+
+def _cache_payload(payload: Any) -> Any:
+    """The cache stores JSON, but an adapter hands back a pydantic model."""
+    return payload.model_dump(by_alias=True) if isinstance(payload, BaseModel) else payload
+
 
 def _cached_error(code: str | None) -> Exception:
     """Rebuild the typed error a negative-cache entry stands for."""
@@ -162,9 +171,25 @@ class ContentGenerator:
         if cached.negative and not runtime.current_context().own_key:
             raise _cached_error(cached.error_code)
         if cached.hit:
-            return GenerateOutcome(
-                payload=cached.payload, cached=True, cache_key=cache_key_str(key)
-            )
+            # The cache stores JSON, so a hit is a dict. Services are written
+            # against whatever the adapter returns (a pydantic model, usually),
+            # and a stale row should not be able to 500 a request, so validate
+            # the hit exactly as fresh output would be. A hit that no longer
+            # validates is treated as a miss.
+            payload = cached.payload
+            if request.adapter is not None:
+                try:
+                    payload = request.adapter(payload)
+                except (ValueError, TypeError, KeyError):
+                    logger.warning(
+                        "ignoring a cached payload that no longer validates for %s",
+                        request.task_id,
+                    )
+                    payload = None
+            if payload is not None:
+                return GenerateOutcome(
+                    payload=payload, cached=True, cache_key=cache_key_str(key)
+                )
 
         await self.budget.require_not_degraded()
 
@@ -226,7 +251,7 @@ class ContentGenerator:
         if not outcome.cached:
             await self.cache.store(
                 key,
-                payload=outcome.payload,
+                payload=_cache_payload(outcome.payload),
                 tokens_in=outcome.tokens_in,
                 tokens_out=outcome.tokens_out,
             )
