@@ -1,9 +1,51 @@
 import * as SelectPrimitive from "@radix-ui/react-select";
+import { createContext, useContext, useRef, useState } from "react";
 
 import { AppIcon, ChevronDownIcon, CheckmarkCircle02Icon } from "../icons";
 import { cn } from "../../lib/utils";
 
-export const Select = SelectPrimitive.Root;
+type SelectProps = React.ComponentProps<typeof SelectPrimitive.Root>;
+
+/** Timestamp of the last item selection, shared with `SelectItem`. */
+const SelectionMarker = createContext<{ at: number } | null>(null);
+
+/**
+ * `Select` with a short close guard.
+ *
+ * Chrome sizes an extension popup to its content, and mounting a portaled menu
+ * can resize/blur the window for a frame. Radix reads that as focus moving
+ * outside and closes the list the instant it opens (a visible flash). Suppress
+ * that synthetic close only; choosing an item, pressing Escape, or clicking
+ * outside after the guard window still closes normally.
+ */
+export function Select({ onOpenChange, ...props }: SelectProps) {
+  const [open, setOpen] = useState(false);
+  const openedAt = useRef(0);
+  const selection = useRef({ at: 0 });
+
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      openedAt.current = Date.now();
+      setOpen(true);
+      onOpenChange?.(true);
+      return;
+    }
+
+    const now = Date.now();
+    const bySelection = now - selection.current.at < 500;
+    if (!bySelection && now - openedAt.current < 400) return;
+
+    setOpen(false);
+    onOpenChange?.(false);
+  }
+
+  return (
+    <SelectionMarker.Provider value={selection.current}>
+      <SelectPrimitive.Root {...props} open={open} onOpenChange={handleOpenChange} />
+    </SelectionMarker.Provider>
+  );
+}
+
 export const SelectGroup = SelectPrimitive.Group;
 
 /**
@@ -80,10 +122,17 @@ export function SelectContent({
 export function SelectItem({
   className,
   children,
+  onSelect,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Item>) {
+  const selection = useContext(SelectionMarker);
+
   return (
     <SelectPrimitive.Item
+      onSelect={(event) => {
+        if (selection) selection.at = Date.now();
+        onSelect?.(event);
+      }}
       className={cn(
         "relative flex w-full cursor-pointer items-center gap-2 rounded-md py-1.5 pr-7 pl-2.5 text-sm",
         "outline-none select-none",
