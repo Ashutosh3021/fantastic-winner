@@ -230,7 +230,11 @@ export function Overlay() {
                 {busy ? t.busyBody : ""}
               </span>
 
-              <ScrollArea className="max-h-[70vh] min-h-64" viewportClassName="p-3">
+              <ScrollArea
+                type="auto"
+                className="min-h-64"
+                viewportClassName="max-h-[70vh] p-3"
+              >
                 <div className="flex flex-col gap-3">
                   {store.error && (
                     <ErrorCard error={store.error} onRetry={() => void run(() => store.loadApproaches())} />

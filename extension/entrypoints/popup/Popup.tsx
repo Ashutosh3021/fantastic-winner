@@ -237,7 +237,7 @@ export function Popup() {
   const signedIn = authState?.signedIn === true;
 
   return (
-    <div className="flex max-h-[600px] w-[22rem] flex-col overflow-y-auto overflow-x-hidden bg-background text-foreground">
+    <div className="cm-scroll flex w-[22rem] flex-col bg-background text-foreground">
       <header className="sticky top-0 z-10 flex h-11 shrink-0 items-center gap-2 border-b border-border bg-card px-3.5">
         <AppIcon icon={GraduationCapIcon} size={16} className="shrink-0 text-primary" />
         <h1 className="text-sm font-semibold tracking-[-0.01em]">CodeMentor</h1>

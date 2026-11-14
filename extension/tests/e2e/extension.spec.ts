@@ -135,6 +135,22 @@ test("signed-in popup and the full learning loop", async () => {
       overlay.getByText("One pass over the array, with constant-time hash lookups."),
     ).toBeVisible();
 
+    // The analysis card is taller than the overlay's 70vh viewport on a short
+    // screen; the wheel must move the inner viewport instead of being clipped.
+    await page.setViewportSize({ width: 900, height: 420 });
+    const scroller = page.locator("[data-radix-scroll-area-viewport]");
+    const before = await scroller.evaluate((el) => ({
+      top: el.scrollTop,
+      height: el.scrollHeight,
+      client: el.clientHeight,
+    }));
+    expect(before.height).toBeGreaterThan(before.client);
+    await scroller.hover();
+    await page.mouse.wheel(0, 400);
+    await expect
+      .poll(() => scroller.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(0);
+
     const finished = await fakeState();
     expect(finished.completed).toBe(true);
     expect(finished.analysisCalls).toBe(1);
