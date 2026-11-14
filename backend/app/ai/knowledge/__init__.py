@@ -17,7 +17,16 @@ _REQUIRED = ("id", "core_idea", "fallback_nudges", "fallback_step_notes")
 def load_all() -> dict[str, dict[str, Any]]:
     entries: dict[str, dict[str, Any]] = {}
     for path in sorted(KNOWLEDGE_DIR.glob("*.yaml")):
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            # A typo in a content file must degrade grounding, not 500 a
+            # learner's card before the model is even called.
+            logger.error("knowledge entry %s is not valid YAML: %s", path.name, exc)
+            continue
+        if not isinstance(data, dict):
+            logger.error("knowledge entry %s is not a mapping", path.name)
+            continue
         entry_id = data.get("id") or path.stem
         missing = [key for key in _REQUIRED if not data.get(key)]
         if missing:

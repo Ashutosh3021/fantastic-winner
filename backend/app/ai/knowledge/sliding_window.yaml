@@ -2,7 +2,7 @@ id: sliding_window
 name: Sliding Window
 signals:
   - contiguous subarray or substring
-  - "longest", "shortest", "at most k"
+  - 'asks for "longest", "shortest", or "at most k"'
   - running window of valid state
 not_when:
   - non-contiguous selection
