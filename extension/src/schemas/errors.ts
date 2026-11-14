@@ -42,5 +42,6 @@ export const apiErrorSchema = z.object({
   route_class: z.string().optional(),
   shortfall: z.number().int().min(0).optional(),
   request_id: z.string().optional(),
+  detail: z.string().optional(),
 });
 export type ApiError = z.infer<typeof apiErrorSchema>;

@@ -7,6 +7,7 @@ export class ApiFailure extends Error {
   readonly resetAt?: string;
   readonly shortfall?: number;
   readonly requestId?: string;
+  readonly detail?: string;
 
   constructor(
     code: ErrorCode,
@@ -17,6 +18,7 @@ export class ApiFailure extends Error {
       resetAt?: string;
       shortfall?: number;
       requestId?: string;
+      detail?: string;
     } = {},
   ) {
     super(message);
@@ -27,6 +29,7 @@ export class ApiFailure extends Error {
     this.resetAt = opts.resetAt;
     this.shortfall = opts.shortfall;
     this.requestId = opts.requestId;
+    this.detail = opts.detail;
   }
 
   toApiError(): ApiError {
@@ -37,6 +40,7 @@ export class ApiFailure extends Error {
       ...(this.resetAt !== undefined ? { reset_at: this.resetAt } : {}),
       ...(this.shortfall !== undefined ? { shortfall: this.shortfall } : {}),
       ...(this.requestId !== undefined ? { request_id: this.requestId } : {}),
+      ...(this.detail !== undefined ? { detail: this.detail } : {}),
     };
   }
 }

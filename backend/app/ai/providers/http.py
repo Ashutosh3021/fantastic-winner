@@ -59,6 +59,10 @@ class OpenAIProvider:
     def available(self) -> bool:
         return bool(self._api_key)
 
+    def _extra_body(self, model: str) -> dict[str, Any]:
+        """Provider-specific knobs a subclass may add to the request body."""
+        return {}
+
     async def generate_json(
         self,
         *,
@@ -84,6 +88,7 @@ class OpenAIProvider:
             ],
             "response_format": {"type": "json_object"},
         }
+        body.update(self._extra_body(str(body["model"])))
         try:
             response = await self._client.post(
                 self.base_url,
@@ -121,6 +126,15 @@ class GroqProvider(OpenAIProvider):
 
     name = "groq"
     base_url = "https://api.groq.com/openai/v1/chat/completions"
+
+    def _extra_body(self, model: str) -> dict[str, Any]:
+        # GPT-OSS counts reasoning tokens against max_tokens. Left at the
+        # default effort a card-sized budget can be spent thinking, so the
+        # completion is reported as truncated. Low effort keeps the budget for
+        # the answer; other Groq models reject the parameter, so gate it.
+        if model.startswith("openai/gpt-oss"):
+            return {"reasoning_effort": "low"}
+        return {}
 
 
 class AnthropicProvider:

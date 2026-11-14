@@ -182,7 +182,11 @@ class AiKeyRejected(AiUnavailable):
     status = 422
 
 class AiOutputTruncated(AppError):
-    """§15.3. Deterministic: retrying repeats the same truncation."""
+    """15.3. Deterministic for a fixed budget.
+
+    Own-key calls retry once with a larger budget first; if the error still
+    reaches the client, the model cannot finish inside our cap.
+    """
 
     code = "ai_output_truncated"
     status = 422

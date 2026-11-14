@@ -57,6 +57,9 @@ export function ErrorCard({
           {error.code}
           {error.request_id ? ` · ${error.request_id}` : ""}
         </p>
+        {error.detail && (
+          <p className="font-mono text-[11px] text-muted-foreground/60">{error.detail}</p>
+        )}
       </CardHeader>
 
       <CardContent>

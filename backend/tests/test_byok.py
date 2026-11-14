@@ -20,11 +20,12 @@ from pydantic import ValidationError
 
 from app.ai import runtime
 from app.ai.gateway import AIGateway, TaskSpec
-from app.ai.providers import ProviderError, ProviderResult
+from app.ai.providers import FinishReason, ProviderError, ProviderResult
 from app.api.routers.learning import _spend_credit
 from app.core.config import ByokConfig, ProviderKeys, Settings
 from app.core.errors import (
     AiKeyRejected,
+    AiOutputTruncated,
     AiUnavailable,
     BadRequest,
     ByokUnavailable,
@@ -432,6 +433,67 @@ class TestOwnKeyRouting:
 
         assert result.payload == {"answer": 7}
         assert _FencedOnRepairProvider.calls == 2
+        await gateway.aclose()
+
+
+class _TruncatingProvider(_RecordingProvider):
+    """Truncates once, then answers. Records the budget of every call."""
+
+    budgets: ClassVar[list[int]] = []
+
+    async def generate_json(self, **kwargs: Any) -> Any:
+        type(self).budgets.append(kwargs["max_tokens"])
+        if len(type(self).budgets) == 1:
+            return ProviderResult(
+                text="",
+                tokens_in=11,
+                tokens_out=kwargs["max_tokens"],
+                finish_reason=FinishReason.LENGTH,
+            )
+        return ProviderResult(text='{"answer": 42}', tokens_in=11, tokens_out=7)
+
+
+class TestOwnKeyTruncation:
+    async def test_own_key_retries_once_with_a_larger_budget(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _TruncatingProvider.budgets.clear()
+        rows: list[dict[str, Any]] = []
+
+        async def spend(**fields: Any) -> None:
+            rows.append(fields)
+
+        monkeypatch.setattr(
+            "app.ai.gateway._PROVIDER_CLASSES", {"openai": _TruncatingProvider}
+        )
+        gateway = AIGateway(_settings(), spend_writer=spend)
+
+        result = await gateway.run(_spec(), api_key=USER_KEY, provider="openai")
+
+        assert result.payload == {"answer": 42}
+        assert _TruncatingProvider.budgets == [64, 128]
+        assert [row["outcome"] for row in rows] == ["truncated", "ok"]
+        await gateway.aclose()
+
+    async def test_shared_budget_is_not_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _TruncatingProvider.budgets.clear()
+        gateway = AIGateway(_settings())
+        gateway._providers["openai"] = _TruncatingProvider(  # type: ignore[assignment]
+            SERVER_KEY, gateway._config.model_for
+        )
+
+        with pytest.raises(AiOutputTruncated) as raised:
+            await gateway.run(_spec())
+
+        assert _TruncatingProvider.budgets == [64]
+        assert raised.value.extra == {
+            "provider": "openai",
+            "model": "",
+            "max_tokens": 64,
+            "task": "concept_card",
+        }
         await gateway.aclose()
 
 

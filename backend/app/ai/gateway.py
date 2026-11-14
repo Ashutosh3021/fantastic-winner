@@ -2,10 +2,12 @@
 
 One entry point, `run`, and the guarantees it makes:
 
-* **Truncation is detected, not retried.** A response that reports
-  ``finish_reason == length`` raises ``ai_output_truncated`` immediately. The
-  same prompt against the same budget truncates the same way every time, so a
-  retry loop here spends money and latency to arrive at the same failure.
+* **Truncation is detected, not retried on our budget.** A response that
+  reports ``finish_reason == length`` raises ``ai_output_truncated``. The same
+  prompt against the same budget truncates the same way every time, so a retry
+  loop spends money and latency to arrive at the same failure. An own-key call
+  is the exception: the model is the learner's choice, so it retries once with
+  a larger budget before surfacing the error.
 * **Every exit path writes spend.** Success, provider failure, validation
   failure, truncation. Failed calls are the expensive ones and were invisible in
   v1's accounting, which is exactly when you need to see them.
@@ -23,7 +25,7 @@ import random
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -95,6 +97,12 @@ _PROVIDER_CLASSES: dict[
 POOL_INTERACTIVE = "interactive"
 POOL_GENERATION = "generation"
 POOL_ANALYSIS = "analysis"
+
+# : An own-key model is the learner's choice, not ours, and reasoning models can
+# : spend the first few thousand completion tokens thinking. One retry with more
+# : room is cheaper for them than a dead end, and capped so a looping model
+# : cannot run away.
+OWN_KEY_RETRY_MAX_TOKENS = 8000
 
 _POOL_SIZE: dict[str, str] = {
     POOL_INTERACTIVE: "concurrency_interactive",
@@ -293,13 +301,35 @@ class AIGateway:
         try:
             provider = await self._provider_for_key(provider_name, api_key, model)
             digest = _key_digest(api_key)
-            return await self._run_with_fallback(
-                spec,
-                (provider_name,),
-                providers={provider_name: provider},
-                breaker_scope=digest[:12],
-                funded_by=runtime.FUNDED_BY_USER,
-            )
+            try:
+                return await self._run_with_fallback(
+                    spec,
+                    (provider_name,),
+                    providers={provider_name: provider},
+                    breaker_scope=digest[:12],
+                    funded_by=runtime.FUNDED_BY_USER,
+                )
+            except AiOutputTruncated:
+                # The caller cannot raise the budget, and a model that thinks
+                # before answering legitimately needs more room. Retry once.
+                if spec.max_tokens >= OWN_KEY_RETRY_MAX_TOKENS:
+                    raise
+                expanded = replace(
+                    spec,
+                    max_tokens=min(spec.max_tokens * 2, OWN_KEY_RETRY_MAX_TOKENS),
+                )
+                logger.info(
+                    "own-key output truncated for %s; retrying with max_tokens=%s",
+                    spec.task_id,
+                    expanded.max_tokens,
+                )
+                return await self._run_with_fallback(
+                    expanded,
+                    (provider_name,),
+                    providers={provider_name: provider},
+                    breaker_scope=digest[:12],
+                    funded_by=runtime.FUNDED_BY_USER,
+                )
         finally:
             semaphore.release()
 
@@ -406,7 +436,13 @@ class AIGateway:
                     funded_by=funded_by,
                 )
                 raise AiOutputTruncated(
-                    "The response reached its length budget before finishing."
+                    "The response reached its length budget before finishing.",
+                    extra={
+                        "provider": name,
+                        "model": str(result.raw.get("model") or ""),
+                        "max_tokens": spec.max_tokens,
+                        "task": spec.task_id,
+                    },
                 )
 
             validated = await self._validate(spec, attempt)
@@ -435,7 +471,14 @@ class AIGateway:
                         tokens_out=result.tokens_out,
                         funded_by=funded_by,
                     )
-                    raise AiInvalidOutput("The response did not match the expected shape.")
+                    raise AiInvalidOutput(
+                        "The response did not match the expected shape.",
+                        extra={
+                            "provider": name,
+                            "model": str(result.raw.get("model") or ""),
+                            "task": spec.task_id,
+                        },
+                    )
 
                 breaker.record_success()
                 repaired_result = repaired.result

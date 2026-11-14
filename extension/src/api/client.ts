@@ -143,13 +143,22 @@ function parseRetryAfter(header: string | null): number | undefined {
   return undefined;
 }
 
-async function toFailure(response: Response): Promise<ApiFailure> {
+function logApiFailure(details: Record<string, unknown>): void {
+  try {
+    console.warn("[codementor] API failure", details);
+  } catch {
+    // A console-less context must not turn a diagnostic into a second failure.
+  }
+}
+
+async function toFailure(response: Response, route: string): Promise<ApiFailure> {
   const requestId = response.headers.get("X-Request-Id") ?? undefined;
   let code: ErrorCode = statusToCode(response.status);
   let message = "";
   let retryAfterSec = parseRetryAfter(response.headers.get("Retry-After"));
   let resetAt = response.headers.get("X-Credits-Reset") ?? undefined;
   let shortfall: number | undefined;
+  let errorBody: Record<string, unknown> | undefined;
 
   try {
     const body: unknown = await response.json();
@@ -158,6 +167,7 @@ async function toFailure(response: Response): Promise<ApiFailure> {
         ? (body as { error: Record<string, unknown> }).error
         : undefined;
     if (error) {
+      errorBody = error;
       code = parseErrorCode(error.code);
       if (typeof error.message === "string" && error.message) message = error.message;
       if (typeof error.retry_after_sec === "number") retryAfterSec = error.retry_after_sec;
@@ -168,12 +178,34 @@ async function toFailure(response: Response): Promise<ApiFailure> {
     // Non-JSON error body: keep the status-derived code.
   }
 
+  logApiFailure({
+    route,
+    status: response.status,
+    code,
+    message: message || fallbackMessage(code),
+    ...(requestId !== undefined ? { requestId } : {}),
+    ...(errorBody !== undefined ? { error: errorBody } : {}),
+  });
+
+  const detailParts: string[] = [];
+  if (typeof errorBody?.provider === "string" && errorBody.provider) {
+    detailParts.push(`provider ${errorBody.provider}`);
+  }
+  if (typeof errorBody?.model === "string" && errorBody.model) {
+    detailParts.push(`model ${errorBody.model}`);
+  }
+  if (typeof errorBody?.max_tokens === "number") {
+    detailParts.push(`budget ${errorBody.max_tokens}`);
+  }
+  const detail = detailParts.length > 0 ? detailParts.join(" · ") : undefined;
+
   return new ApiFailure(code, message || fallbackMessage(code), {
     status: response.status,
     ...(retryAfterSec !== undefined ? { retryAfterSec } : {}),
     ...(resetAt !== undefined ? { resetAt } : {}),
     ...(shortfall !== undefined ? { shortfall } : {}),
     ...(requestId !== undefined ? { requestId } : {}),
+    ...(detail !== undefined ? { detail } : {}),
   });
 }
 
@@ -217,6 +249,13 @@ async function sendOnce<R extends RouteId>(
     });
   } catch {
     const timedOut = controller.signal.aborted;
+    logApiFailure({
+      route,
+      status: 0,
+      code: timedOut ? "timeout" : "network_error",
+      url,
+      timedOut,
+    });
     throw new ApiFailure(
       timedOut ? "timeout" : "network_error",
       timedOut ? `That took longer than ${Math.round(timeoutMs / 1000)} seconds.` : fallbackMessage("network_error"),
@@ -226,9 +265,10 @@ async function sendOnce<R extends RouteId>(
   }
 
   if (response.status === 401 && !options.anonymous) {
+    logApiFailure({ route, status: 401, code: "unauthorized" });
     throw new ApiFailure("unauthorized", fallbackMessage("unauthorized"), { status: 401 });
   }
-  if (!response.ok) throw await toFailure(response);
+  if (!response.ok) throw await toFailure(response, route);
 
   const raw: unknown = await response.json().catch(() => null);
   const envelope =
@@ -245,6 +285,12 @@ async function sendOnce<R extends RouteId>(
 
   const parsed = def.response.safeParse(envelope.data);
   if (!parsed.success) {
+    logApiFailure({
+      route,
+      status: response.status,
+      code: "invalid_response",
+      paths: parsed.error.issues.map((issue) => issue.path.join(".")),
+    });
     throw new ApiFailure(
       "invalid_response",
       fallbackMessage("invalid_response"),
